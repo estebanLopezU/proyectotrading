@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import joblib
+import numpy as np  # sin importar np: wilson_lb usaba np.sqrt sin importar numpy
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]

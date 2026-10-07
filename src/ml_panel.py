@@ -1,52 +1,42 @@
-"""Panel ML integrado al dashboard Fase 2+3 (con filtro ATR calibrado).
-Busca modelo por timeframe exacto; si no existe, usa el disponible del simbolo.
+"""src/ml_panel.py
+Panel ML V2 integrado al dashboard.
+Uso honesto: solo senala si la precision >=80% (validada out-of-sample) + confluencia tecnica.
 """
-import glob
-import os
+from __future__ import annotations
 
-import joblib
-from src.features import latest_features
+import sys
+from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-def _load_bundle(symbol: str, timeframe: str):
-    safe = symbol.replace("/", "_")
-    # 1) Intentos por timeframe exacto
-    paths = [
-        f"models/rf_{safe}_{timeframe}_h5.joblib",
-        f"models/rf_{safe}_{timeframe}_h3.joblib",
-        f"models/rf_{safe}_{timeframe}.joblib",
-    ]
-    for p in paths:
-        if os.path.exists(p):
-            return joblib.load(p), p
-    # 2) Respaldo: cualquier modelo del simbolo (ej: entrenado en 15m)
-    for p in sorted(glob.glob(f"models/rf_{safe}_*.joblib")):
-        try:
-            return joblib.load(p), p
-        except Exception:
-            continue
-    return None, None
+from src.scorer import score_signal  # noqa: E402
 
 
-def ml_signal(df, symbol: str, timeframe: str) -> dict:
-    b, path = _load_bundle(symbol, timeframe)
-    if b is None:
-        return {"ok": False, "label": "Modelo no entrenado"}
-    try:
-        atr_min = float(b.get("atr_min", 0) or 0)
-        cur_atr = float(df["atr_pct"].iloc[-1] or 0)
-        note_tf = ""
-        if f"_{timeframe}_" not in os.path.basename(path):
-            note_tf = f" (modelo de {os.path.basename(path).split('_')[-1].replace('.joblib','')})"
-        if atr_min and cur_atr < atr_min:
-            return {"ok": True, "label": "MANTENER (ML ruido)", "proba": 0.5,
-                    "acc": float(b.get("acc", 0)), "path": path,
-                    "note": f"ATR {cur_atr:.3f} < min {atr_min:.3f}: mercado sin fuerza"}
-        X = latest_features(df, b["cols"])
-        p = float(b["model"].predict_proba(X)[0][1])
-        lbl = "COMPRAR (ML)" if p >= 0.6 else ("VENDER (ML)" if p <= 0.4 else "MANTENER (ML)")
-        return {"ok": True, "label": lbl, "proba": p, "acc": float(b.get("acc", 0)),
-                "path": path, "note": note_tf}
-    except Exception as e:
-        return {"ok": False, "label": f"Error modelo: {str(e)[:80]}"}
+def ml_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6) -> dict:
+    """
+    Devuelve un diccionario con:
+      - label: COMPRAR / VENDER / SIN SENAL / SIN MODELO
+      - proba: probabilidad calibrada (solo si senal)
+      - confidence: 0..1 (confluencia de condiciones + calibracion)
+      - precision: precision historica validada (0..1)
+      - n_test: cantidad de muestras validating
+      - calibrated: bool
+      - conditions: {adx, rsi, bb_pct, vol_ratio, trend_strength, roc_5}
+      - note: mensaje explicativo
+    """
+    return score_signal(df, symbol, timeframe, horizon=horizon)
 
+
+if __name__ == "__main__":
+    import json
+    from src.ingest_ext import fetch_ohlcv_paginated
+    from src.indicators import add_indicators
+    from src.features_v2 import add_features_v2
+
+    raw = fetch_ohlcv_paginated("BTC/USDT", "15m", total=1000)
+    raw["is_closed"] = True
+    df = add_features_v2(add_indicators(raw))
+    res = score_signal(df, "BTC/USDT", "15m", horizon=6)
+    print(json.dumps(res, default=str, indent=2))
