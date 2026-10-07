@@ -6,6 +6,7 @@ NUNCA dibuja. Solo datos limpios.
 """
 from __future__ import annotations
 
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -15,6 +16,15 @@ import pandas as pd
 from loguru import logger
 
 from config.settings import SETTINGS, cache_path_for
+
+
+def _safe_float(x, default: float = 0.0) -> float:
+    """Convert to float, returning default if None or NaN."""
+    try:
+        fx = float(x)
+    except (TypeError, ValueError):
+        return default
+    return fx if not math.isnan(fx) else default
 
 
 @dataclass
