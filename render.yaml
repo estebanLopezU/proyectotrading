@@ -1,0 +1,17 @@
+packages:
+  - python-3.11
+
+buildCommand: "pip install -r requirements.txt"
+startCommand: "streamlit run app/dashboard.py"
+
+envVars:
+  - key: SYMBOL
+    value: "BTC/USDT"
+  - key: TIMEFRAME
+    value: "15m"
+  - key: DISPLAY_TZ
+    value: "America/Bogota"
+  - key: TELEGRAM_BOT_TOKEN
+    sync: false
+  - key: TELEGRAM_CHAT_ID
+    sync: false

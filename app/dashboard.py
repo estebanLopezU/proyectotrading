@@ -4,6 +4,7 @@ Correr: streamlit run app/dashboard.py
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -28,6 +29,17 @@ st.sidebar.title("Control Trader")
 symbol = st.sidebar.text_input("Simbolo (ccxt)", value=SETTINGS.symbol)
 timeframe = st.sidebar.selectbox("Temporalidad", list(SETTINGS.timeframes), index=0)
 refresh = st.sidebar.select_slider("Auto-refresh (s)", options=[5, 15, 30, 60], value=15)
+
+# Opcion 2: integrar API + Dashboard
+ml_source = st.sidebar.radio(
+    "Fuente de prediccion ML",
+    ["Local", "API (/predict)"],
+    help="Local usa el modelo directo. API consume FastAPI en /predict.",
+)
+api_base = ""
+if ml_source == "API (/predict)":
+    api_base = st.sidebar.text_input("API base URL", value="http://127.0.0.1:8000")
+
 if st.sidebar.button("Recargar ahora"):
     st.cache_data.clear()
 
@@ -108,9 +120,20 @@ st.dataframe(show, use_container_width=True)
 
 st.subheader("Prediccion ML Fase 2+3")
 try:
-    from src.ml_panel import ml_signal
-    ml = ml_signal(df, symbol, timeframe)
-    if ml["ok"]:
+    if ml_source == "API (/predict)":
+        # Opcion 2: consumir FastAPI /predict
+        import json
+        import urllib.request
+        url = f"{api_base.rstrip('/')}/predict?symbol={symbol}&timeframe={timeframe}"
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        ml = data.get("ml", {})
+        st.caption(f"Fuente: API {url} | RSI={data.get('rsi14')} | precio={data.get('price')}")
+    else:
+        from src.ml_panel import ml_signal
+        ml = ml_signal(df, symbol, timeframe)
+
+    if ml.get("ok"):
         extra = f" | {ml.get('note', '')}" if ml.get("note") else f" | {ml.get('path', '')}"
         if "COMPRAR" in ml["label"]:
             st.success(f"{ml['label']} p_subida={ml['proba']:.2f} acc_test={ml['acc']:.3f}{extra}")
@@ -119,14 +142,17 @@ try:
         else:
             st.warning(f"{ml['label']} p_subida={ml['proba']:.2f} acc_test={ml['acc']:.3f}{extra}")
         from src.alerts import send_telegram
-        if ml["proba"] >= 0.70 or ml["proba"] <= 0.30:
+        min_proba = float(os.getenv("ALERT_MIN_PROBA", "0.70"))
+        if ml["proba"] >= min_proba or ml["proba"] <= (1 - min_proba):
             r = send_telegram(f"{symbol} {timeframe} {ml['label']} p={ml['proba']:.2f} precio={float(last['close']):.2f}")
             if r["ok"]:
                 st.toast("Alerta Telegram enviada")
+            elif r.get("why", "").startswith("sin credenciales"):
+                pass  # sin .env configurado: silencioso
     else:
-        st.info(f"ML no disponible: {ml['label']}. Entrena: python scripts/calibrate.py")
+        st.info(f"ML no disponible: {ml.get('label','Modelo no entrenado')}. Entrena: python scripts/train_model.py")
 except Exception as e:
-    st.info(f"ML no disponible: {e}")
+    st.info(f"ML no disponible ({ml_source}): {e}")
 
 st.subheader("Paper-trading simulado ($10,000)")
 pc = st.columns(3)
