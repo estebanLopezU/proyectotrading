@@ -1,20 +1,24 @@
-# === Framework UI en vivo ===
-streamlit
-streamlit-autorefresh
-plotly
-# === Trading / Datos ===
-ccxt
-yfinance
-# === Datos / Utils ===
-pandas
-numpy
-python-dotenv
-pydantic
-loguru
-# === Calidad ingenieril ===
-pytest
-joblib
-scikit-learn
-fastapi
-uvicorn
+# Fase 1 - Ingesta y dashboard en vivo
+streamlit==1.37.1
+streamlit-autorefresh==1.0.2
+plotly==5.23.0
+ccxt==4.3.70
+yfinance==0.2.43
 
+# Fase 2 - Indicadores y modelos de aprendizaje
+pandas==2.1.3
+numpy==1.26.4
+ta==0.11.0
+scikit-learn==1.6.0
+joblib==1.4.2
+
+# Fase 3 - Alertas, paper-trading y metricas honestas
+python-dotenv==1.0.1
+pydantic==2.8.4
+loguru==0.7.2
+scipy==1.14.1
+
+# Fase 4 - API y deploy
+fastapi==0.115.0
+uvicorn[standard]==0.34.0
+httpx==0.28.1
