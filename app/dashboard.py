@@ -134,23 +134,36 @@ try:
         ml = ml_signal(df, symbol, timeframe)
 
     if ml.get("ok"):
-        extra = f" | {ml.get('note', '')}" if ml.get("note") else f" | {ml.get('path', '')}"
+        prec = ml.get("precision", 0) or 0
+        extra = ""
+        if ml.get("note"):
+            extra += f" | {ml['note']}"
+        if ml.get("calibrated"):
+            extra += f" | umbral [{ml.get('thr_lo',0):.2f},{ml.get('thr_hi',0):.2f}]"
+        header = f"{ml['label']} p={ml['proba']:.2f}"
+        if prec > 0:
+            header += f" precision_historica={prec:.0%}"
         if "COMPRAR" in ml["label"]:
-            st.success(f"{ml['label']} p_subida={ml['proba']:.2f} acc_test={ml['acc']:.3f}{extra}")
+            st.success(f"{header}{extra}")
         elif "VENDER" in ml["label"]:
-            st.error(f"{ml['label']} p_subida={ml['proba']:.2f} acc_test={ml['acc']:.3f}{extra}")
+            st.error(f"{header}{extra}")
         else:
-            st.warning(f"{ml['label']} p_subida={ml['proba']:.2f} acc_test={ml['acc']:.3f}{extra}")
+            st.warning(f"{header}{extra}")
+        # Estadistica de probabilidad (analitica)
+        st.caption(
+            f"Modelo: {ml.get('path','')} | ACC base={ml.get('acc',0):.3f} | "
+            f"Umbral de disparo: >=80% precision validada en test"
+        )
         from src.alerts import send_telegram
         min_proba = float(os.getenv("ALERT_MIN_PROBA", "0.70"))
-        if ml["proba"] >= min_proba or ml["proba"] <= (1 - min_proba):
-            r = send_telegram(f"{symbol} {timeframe} {ml['label']} p={ml['proba']:.2f} precio={float(last['close']):.2f}")
+        if ("COMPRAR" in ml["label"] or "VENDER" in ml["label"]) and prec >= 0.80:
+            r = send_telegram(f"{symbol} {timeframe} {ml['label']} p={ml['proba']:.2f} prec={prec:.0%} precio={float(last['close']):.2f}")
             if r["ok"]:
                 st.toast("Alerta Telegram enviada")
             elif r.get("why", "").startswith("sin credenciales"):
                 pass  # sin .env configurado: silencioso
     else:
-        st.info(f"ML no disponible: {ml.get('label','Modelo no entrenado')}. Entrena: python scripts/train_model.py")
+        st.info(f"ML no disponible: {ml.get('label','Modelo no entrenado')}. Entrena: python scripts/train_v2.py")
 except Exception as e:
     st.info(f"ML no disponible ({ml_source}): {e}")
 

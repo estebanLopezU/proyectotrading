@@ -42,4 +42,6 @@ def predict(symbol: str = Query(default="BTC/USDT"), timeframe: str = Query(defa
     rsi = float(df["rsi14"].iloc[-1] or 50)
     return {"symbol": symbol, "timeframe": timeframe, "price": price_now, "rsi14": round(rsi, 2),
             "source": res.source, "stale": res.stale, "ml": ml,
-            "disclaimer": "Educativo. No es asesoria financiera."}
+            "signal": ml.get("label"), "precision": ml.get("precision", 0),
+            "thresholds": {"lo": ml.get("thr_lo"), "hi": ml.get("thr_hi")},
+            "disclaimer": "Educativo. Precision historica validada en test; no garantiza futuro."}
