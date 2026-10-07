@@ -53,8 +53,20 @@ def predict(symbol: str = Query(default="BTC/USDT"), timeframe: str = Query(defa
     ml = ml_signal(df, symbol, timeframe)
     price_now = float(df["close"].iloc[-1])
     rsi = _safe_float(df["rsi14"].iloc[-1], 50.0)
+    prob_up = ml.get("prob_up")
+    prob_down = ml.get("prob_down")
     return {"symbol": symbol, "timeframe": timeframe, "price": price_now, "rsi14": round(rsi, 2),
             "source": res.source, "stale": res.stale, "ml": ml,
             "signal": ml.get("label"), "precision": ml.get("precision", 0),
+            "prediction": {
+                "direction": ml.get("direction"),
+                "prob_up": round(prob_up, 4) if prob_up is not None else None,
+                "prob_down": round(prob_down, 4) if prob_down is not None else None,
+                "prob_up_pct": f"{prob_up:.1%}" if prob_up is not None else None,
+                "prob_down_pct": f"{prob_down:.1%}" if prob_down is not None else None,
+                "horizon_velas": ml.get("horizon_velas"),
+                "horizon_desc": (f"en {ml['horizon_velas']} velas de {timeframe}"
+                                 if ml.get("horizon_velas") else None),
+            },
             "thresholds": {"lo": ml.get("thr_lo"), "hi": ml.get("thr_hi")},
             "disclaimer": "Educativo. Precision historica validada en test; no garantiza futuro."}

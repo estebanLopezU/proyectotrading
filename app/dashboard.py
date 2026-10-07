@@ -146,6 +146,25 @@ try:
 
     if ml.get("ok"):
         prec = ml.get("precision", 0) or 0
+
+        # ⚠️ Probabilidad direccional: ¿sube o baja el precio?
+        pu = _safe_float(ml.get("prob_up"), 0.5)
+        pd_ = _safe_float(ml.get("prob_down"), 0.5)
+        hz = ml.get("horizon_velas")
+        hz_txt = f" (próximas {hz} velas de {timeframe})" if hz else ""
+        st.markdown(f"**Predicción de precio{hz_txt}**")
+        pc1, pc2 = st.columns(2)
+        pc1.metric("📈 SUBE", f"{pu:.1%}", help="Probabilidad de que el precio suba")
+        pc2.metric("📉 BAJA", f"{pd_:.1%}", help="Probabilidad de que el precio baje")
+        st.progress(pu)
+        dir_color = "green" if pu >= 0.5 else "red"
+        st.markdown(
+            f"<p style='text-align:center;font-weight:700;color:{dir_color};'>"
+            f"{'📈' if pu >= 0.5 else '📉'} Dirección más probable: "
+            f"{'SUBE' if pu >= 0.5 else 'BAJA'}</p>",
+            unsafe_allow_html=True,
+        )
+
         extra = ""
         if ml.get("note"):
             extra += f" | {ml['note']}"

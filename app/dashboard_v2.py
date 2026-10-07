@@ -349,6 +349,26 @@ if paper.qty > 0:
 st.markdown("### Señal ML")
 if ml.get("ok"):
     prec = ml.get("precision", 0) or 0
+
+    # ⚠️ Probabilidad direccional: ¿sube o baja el precio?
+    pu = _safe_float(ml.get("prob_up"), 0.5)
+    pd_ = _safe_float(ml.get("prob_down"), 0.5)
+    hz = ml.get("horizon_velas")
+    hz_txt = f" · próximas {hz} velas" if hz else ""
+    st.markdown(f"**Predicción{hz_txt}**")
+    pc1, pc2 = st.columns(2)
+    arrow_up = "📈" if pu >= 0.5 else "📉"
+    pc1.metric("SUBE", f"{pu:.1%}", help="Probabilidad de que el precio suba")
+    pc2.metric("BAJA", f"{pd_:.1%}", help="Probabilidad de que el precio baje")
+    st.progress(pu)
+    dir_color = "#50fa7b" if pu >= 0.5 else "#ff5555"
+    st.markdown(
+        f"<div style='text-align:center;font-weight:700;color:{dir_color};'>"
+        f"{arrow_up} Dirección más probable: {'SUBE' if pu >= 0.5 else 'BAJA'}</div>",
+        unsafe_allow_html=True,
+    )
+    st.divider()
+
     extra = ""
     if ml.get("note"):
         extra += f" | {ml['note']}"
@@ -364,6 +384,7 @@ if ml.get("ok"):
     st.caption(f"Modelo: {ml.get('path', 'N/A')}")
 else:
     st.info(f"ML: {ml.get('label', 'Modelo no entrenado')} | {ml.get('note', '')}")
+    st.caption("Sin predicción direccional disponible (modelo no cargado o sin datos).")
 
 # ═══════════════════════════════════════
 # 3. Equity curve + drawdown

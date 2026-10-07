@@ -70,22 +70,17 @@ def load_bundle(symbol: str, timeframe: str):
 def score_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6):
     b, path = load_bundle(symbol, timeframe)
     meta = {"label": "SIN MODELO", "proba": None, "confidence": 0.0, "precision": 0.0,
-            "n_test": 0, "calibration": False, "note": "sin modelo entrenado"}
+            "n_test": 0, "calibration": False, "note": "sin modelo entrenado",
+            "ok": False, "prob_up": None, "prob_down": None, "horizon_velas": None}
 
     if b is None:
         return meta
 
     try:
         last = df.iloc[-1].to_dict()
-        atr = _safe_float(last.get("atr_pct", 0), 0.0)
+        atr = _safe_float(last.get("atr_pct", 0.0), 0.0)
         atr_min = _safe_float(b.get("atr_min", 0), 0.0)
-
-        if atr_min and atr < atr_min:
-            return {"label": "SIN SENAL (ruido)", "proba": None, "confidence": 0.0,
-                    "precision": 0.0, "n_test": 0, "calibration": False,
-                    "conditions": {"adx": 0.0, "rsi": 50.0, "bb_pct": 0.5, "vol_ratio": 1.0,
-                                   "trend_strength": 0.0, "roc_5": 0.0, "close_pos": 0.5},
-                    "conditions_data": "atr_bajo", "n_cond": 0, "meta": meta}
+        atr_bajo = bool(atr_min and atr < atr_min)
 
         cols = b["cols"]
         if cols and cols[0] in ("trend_strength", "rsi14") and "stoch_k" in cols:
@@ -97,6 +92,24 @@ def score_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6):
             note = "features_v1"
 
         model = b["model"]
+
+        # Probabilidad direccional SIEMPRE primero (aunque el filtro de ATR bloquee la senal):
+        # proba = P(sube en +horizon velas); prob_down = 1 - proba
+        proba = float(model.predict_proba(X)[0][1])
+        prob_up = proba
+        prob_down = 1.0 - proba
+        horizon_velas = int(b.get("horizon", 0) or 0)
+
+        if atr_bajo:
+            return {"label": "SIN SENAL (ruido)", "proba": proba, "confidence": 0.0,
+                    "precision": 0.0, "n_test": 0, "calibration": False,
+                    "conditions": {"adx": 0.0, "rsi": 50.0, "bb_pct": 0.5, "vol_ratio": 1.0,
+                                   "trend_strength": 0.0, "roc_5": 0.0, "close_pos": 0.5},
+                    "conditions_data": "atr_bajo", "n_cond": 0, "meta": meta,
+                    "ok": True, "prob_up": prob_up, "prob_down": prob_down,
+                    "horizon_velas": horizon_velas,
+                    "direction": "SUBE" if prob_up >= 0.5 else "BAJA",
+                    "note": "ATR bajo: sin senal de entrada, pero la probabilidad direccional sigue siendo valida"}
         adx = _safe_float(last.get("adx14", 0), 0.0)
         rsi = _safe_float(last.get("rsi14", 0), 50.0)
         bb_pct = _safe_float(last.get("bb_pct", 0.5), 0.5)
@@ -126,7 +139,7 @@ def score_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6):
         if n_cond >= 2:
             conf = min(0.95, 0.5 + 0.08 * (n_cond - 2))
 
-        proba = float(model.predict_proba(X)[0][1])
+        proba = prob_up  # ya calculado arriba (P(sube))
         calibrated = bool(b.get("calibrated", False))
         prec = _safe_float(b.get("precision_hi", 0), 0.0)
         n_test = int(b.get("n_test", 0)) or 0
@@ -161,8 +174,13 @@ def score_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6):
             "note": f"prec_hist={prec:.1%} ic_wilson={prec:.1%} (n={n_test})",
             "calibrated": calibrated, "path": path,
             "prec_validada": prec, "ic_wilson": conf,
+            "ok": True,
+            "prob_up": prob_up, "prob_down": prob_down,
+            "horizon_velas": horizon_velas,
+            "direction": "SUBE" if prob_up >= 0.5 else "BAJA",
         }
 
     except Exception as e:
         return {"label": "ERROR", "proba": None, "confidence": 0.0, "precision": 0.0,
-                "n_test": 0, "calibration": False, "note": str(e)[:100]}
+                "n_test": 0, "calibration": False, "note": str(e)[:100],
+                "ok": False, "prob_up": None, "prob_down": None, "horizon_velas": None}
