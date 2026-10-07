@@ -4,6 +4,7 @@ Correr: streamlit run app/dashboard.py
 """
 from __future__ import annotations
 
+import math
 import os
 import sys
 from pathlib import Path
@@ -21,6 +22,16 @@ from config.settings import SETTINGS  # noqa: E402
 from src.indicators import add_indicators, latest_signal  # noqa: E402
 from src.ingest import fetch_ticker_24h, get_ohlcv  # noqa: E402
 from src.utils import fmt_money, fmt_pct, setup_logger  # noqa: E402
+from src.alerts import send_telegram  # noqa: E402
+
+
+def _safe_float(x, default: float = 0.0) -> float:
+    """Convert to float, returning default if None or NaN."""
+    try:
+        fx = float(x)
+    except (TypeError, ValueError):
+        return default
+    return fx if not math.isnan(fx) else default
 
 setup_logger()
 st.set_page_config(page_title="Trading Prototype - Vivo", layout="wide", page_icon="📈")
@@ -72,11 +83,11 @@ price = float(tick.get("last") or last["close"])
 sig = latest_signal(df)
 
 c1, c2, c3, c4, c5 = st.columns(5)
-pct = float(tick.get("pct_24h", 0) or 0)
+pct = _safe_float(tick.get("pct_24h"), 0)
 c1.metric("Precio actual", fmt_money(price), fmt_pct(pct))
 c2.metric("Alto 24h", fmt_money(float(tick.get("high_24h") or df["high"].tail(24).max())))
 c3.metric("Bajo 24h", fmt_money(float(tick.get("low_24h") or df["low"].tail(24).min())))
-c4.metric("RSI 14", f"{float(last.get('rsi14', 0) or 0):.1f}")
+c4.metric("RSI 14", f"{_safe_float(last.get('rsi14'), 0):.1f}")
 atrp = last.get("atr_pct", float("nan"))
 c5.metric("ATR %", f"{float(atrp):.2f}%" if pd.notna(atrp) else "-")
 
@@ -154,7 +165,6 @@ try:
             f"Modelo: {ml.get('path','')} | ACC base={ml.get('acc',0):.3f} | "
             f"Umbral de disparo: >=80% precision validada en test"
         )
-        from src.alerts import send_telegram
         min_proba = float(os.getenv("ALERT_MIN_PROBA", "0.70"))
         if ("COMPRAR" in ml["label"] or "VENDER" in ml["label"]) and prec >= 0.80:
             r = send_telegram(f"{symbol} {timeframe} {ml['label']} p={ml['proba']:.2f} prec={prec:.0%} precio={float(last['close']):.2f}")

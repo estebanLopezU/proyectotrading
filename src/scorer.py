@@ -2,6 +2,7 @@
 Scorer de senales con metrica honesta de precision y confianza (validacion out-of-sample).
 """
 
+import math
 import glob
 import os
 import sys
@@ -10,6 +11,15 @@ from pathlib import Path
 import joblib
 import numpy as np  # sin importar np: wilson_lb usaba np.sqrt sin importar numpy
 import pandas as pd
+
+
+def _safe_float(x, default: float = 0.0) -> float:
+    """Convert to float, returning default if None or NaN."""
+    try:
+        fx = float(x)
+    except (TypeError, ValueError):
+        return default
+    return fx if not math.isnan(fx) else default
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -67,8 +77,8 @@ def score_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6):
 
     try:
         last = df.iloc[-1].to_dict()
-        atr = float(last.get("atr_pct", 0) or 0)
-        atr_min = float(b.get("atr_min", 0) or 0)
+        atr = _safe_float(last.get("atr_pct", 0), 0.0)
+        atr_min = _safe_float(b.get("atr_min", 0), 0.0)
 
         if atr_min and atr < atr_min:
             return {"label": "SIN SENAL (ruido)", "proba": None, "confidence": 0.0,
@@ -87,13 +97,13 @@ def score_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6):
             note = "features_v1"
 
         model = b["model"]
-        adx = float(last.get("adx14", 0) or 0)
-        rsi = float(last.get("rsi14", 0) or 50)
-        bb_pct = float(last.get("bb_pct", 0.5) or 0.5)
-        vol_ratio = float(last.get("vol_ratio", 1.0) or 1.0)
-        trend_s = float(last.get("trend_strength", 0) or 0)
-        roc_5 = float(last.get("roc_5", 0) or 0)
-        close_pos = float(last.get("close_pos_range", 0.5) or 0.5)
+        adx = _safe_float(last.get("adx14", 0), 0.0)
+        rsi = _safe_float(last.get("rsi14", 0), 50.0)
+        bb_pct = _safe_float(last.get("bb_pct", 0.5), 0.5)
+        vol_ratio = _safe_float(last.get("vol_ratio", 1.0), 1.0)
+        trend_s = _safe_float(last.get("trend_strength", 0), 0.0)
+        roc_5 = _safe_float(last.get("roc_5", 0), 0.0)
+        close_pos = _safe_float(last.get("close_pos_range", 0.5), 0.5)
 
         active = []
         if adx >= CONF["adx_min"]:
@@ -118,7 +128,7 @@ def score_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6):
 
         proba = float(model.predict_proba(X)[0][1])
         calibrated = bool(b.get("calibrated", False))
-        prec = float(b.get("precision_hi", 0) or 0) or 0
+        prec = _safe_float(b.get("precision_hi", 0), 0.0)
         n_test = int(b.get("n_test", 0)) or 0
         thr_hi = float(b.get("thr_hi", 0.60))
         thr_lo = float(b.get("thr_lo", 0.40))

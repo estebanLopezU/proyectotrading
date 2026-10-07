@@ -3,8 +3,18 @@ Sin dependencia 'ta' para maxima compatibilidad Python 3.12.
 """
 from __future__ import annotations
 
+import math
 import numpy as np
 import pandas as pd
+
+
+def _safe_float(x, default: float = 0.0) -> float:
+    """Convert to float, returning default if None or NaN."""
+    try:
+        fx = float(x)
+    except (TypeError, ValueError):
+        return default
+    return fx if not math.isnan(fx) else default
 
 
 def _sma(s: pd.Series, w: int) -> pd.Series:
@@ -70,7 +80,7 @@ def latest_signal(df: pd.DataFrame) -> dict:
     r = df.iloc[-1]
     reasons: list[str] = []
     score = 0
-    rsi = float(r.get("rsi14", 50) or 50)
+    rsi = _safe_float(r.get("rsi14", 50), 50.0)
     if rsi < 30:
         score += 2
         reasons.append(f"RSI {rsi:.1f} sobreventa")
@@ -85,7 +95,7 @@ def latest_signal(df: pd.DataFrame) -> dict:
     if bool(r.get("cross_death", False)):
         score -= 2
         reasons.append("Cruce muerte SMA20<SMA50")
-    mh = float(r.get("macd_hist", 0) or 0)
+    mh = _safe_float(r.get("macd_hist", 0), 0.0)
     if mh > 0:
         score += 1
         reasons.append("MACD positivo")

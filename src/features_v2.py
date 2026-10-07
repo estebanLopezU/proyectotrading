@@ -3,26 +3,11 @@ Todo sin look-ahead: solo usa informacion hasta la vela actual.
 """
 from __future__ import annotations
 
+import math
 import numpy as np
 import pandas as pd
 
-
-def _ema(s: pd.Series, w: int) -> pd.Series:
-    return s.ewm(span=w, adjust=False, min_periods=w).mean()
-
-
-def _sma(s: pd.Series, w: int) -> pd.Series:
-    return s.rolling(w, min_periods=w).mean()
-
-
-def _rsi(close: pd.Series, w: int = 14) -> pd.Series:
-    d = close.diff()
-    gain = d.clip(lower=0)
-    loss = -d.clip(upper=0)
-    ag = gain.ewm(alpha=1 / w, adjust=False, min_periods=w).mean()
-    al = loss.ewm(alpha=1 / w, adjust=False, min_periods=w).mean()
-    rs = ag / al.replace(0, np.nan)
-    return (100 - (100 / (1 + rs))).fillna(50.0)
+from src.indicators import _sma, _ema, _rsi
 
 
 def _stoch_k(high: pd.Series, low: pd.Series, close: pd.Series, w: int = 14) -> pd.Series:

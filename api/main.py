@@ -4,6 +4,7 @@ Correr: uvicorn api.main:app --reload --port 8000
 """
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -16,6 +17,15 @@ from src.indicators import add_indicators
 from src.ingest import fetch_ticker_24h, get_ohlcv
 from src.ml_panel import ml_signal
 
+
+def _safe_float(x, default: float = 0.0) -> float:
+    """Convert to float, returning default if None or NaN."""
+    try:
+        fx = float(x)
+    except (TypeError, ValueError):
+        return default
+    return fx if not math.isnan(fx) else default
+
 app = FastAPI(title="Trading Prototype API", version="1.0-fase4")
 
 
@@ -26,11 +36,14 @@ def health():
 
 @app.get("/price")
 def price(symbol: str = Query(default="BTC/USDT"), timeframe: str = Query(default="1m")):
-    res = get_ohlcv(symbol, timeframe, 5)
-    tick = fetch_ticker_24h(symbol)
-    last = float(res.df["close"].iloc[-1])
-    return {"symbol": symbol, "timeframe": timeframe, "last": tick.get("last") or last,
-            "ticker": tick, "source": res.source, "stale": res.stale, "latency_ms": round(res.latency_ms)}
+    try:
+        res = get_ohlcv(symbol, timeframe, 5)
+        tick = fetch_ticker_24h(symbol)
+        last = _safe_float(res.df["close"].iloc[-1], 0.0)
+        return {"symbol": symbol, "timeframe": timeframe, "last": tick.get("last") or last,
+                "ticker": tick, "source": res.source, "stale": res.stale, "latency_ms": round(res.latency_ms)}
+    except Exception as e:
+        return {"symbol": symbol, "timeframe": timeframe, "last": 0.0, "error": str(e)[:100]}
 
 
 @app.get("/predict")
@@ -39,7 +52,7 @@ def predict(symbol: str = Query(default="BTC/USDT"), timeframe: str = Query(defa
     df = add_indicators(res.df)
     ml = ml_signal(df, symbol, timeframe)
     price_now = float(df["close"].iloc[-1])
-    rsi = float(df["rsi14"].iloc[-1] or 50)
+    rsi = _safe_float(df["rsi14"].iloc[-1], 50.0)
     return {"symbol": symbol, "timeframe": timeframe, "price": price_now, "rsi14": round(rsi, 2),
             "source": res.source, "stale": res.stale, "ml": ml,
             "signal": ml.get("label"), "precision": ml.get("precision", 0),

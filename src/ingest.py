@@ -98,12 +98,12 @@ def fetch_ticker_24h(symbol: str | None = None) -> dict:
         ex = _build_exchange(SETTINGS.exchange_id)
         t = ex.fetch_ticker(symbol)
         return {
-            "last": float(t.get("last") or 0),
-            "pct_24h": float(t.get("percentage") or 0),
-            "high_24h": float(t.get("high") or 0),
-            "low_24h": float(t.get("low") or 0),
-            "base_vol": float(t.get("baseVolume") or 0),
-            "quote_vol": float(t.get("quoteVolume") or 0),
+            "last": _safe_float(t.get("last"), 0.0),
+            "pct_24h": _safe_float(t.get("percentage"), 0.0),
+            "high_24h": _safe_float(t.get("high"), 0.0),
+            "low_24h": _safe_float(t.get("low"), 0.0),
+            "base_vol": _safe_float(t.get("baseVolume"), 0.0),
+            "quote_vol": _safe_float(t.get("quoteVolume"), 0.0),
         }
     except Exception as e:  # noqa: BLE001
         logger.warning(f"ticker fallo: {e}")
