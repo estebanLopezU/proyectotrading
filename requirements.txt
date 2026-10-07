@@ -1,0 +1,20 @@
+# === Framework UI en vivo ===
+streamlit
+streamlit-autorefresh
+plotly
+# === Trading / Datos ===
+ccxt
+yfinance
+# === Datos / Utils ===
+pandas
+numpy
+python-dotenv
+pydantic
+loguru
+# === Calidad ingenieril ===
+pytest
+joblib
+scikit-learn
+fastapi
+uvicorn
+
