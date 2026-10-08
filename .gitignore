@@ -1,11 +1,50 @@
+# Virtual environments
 venv/
+env/
+ENV/
+
+# Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.so
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Environment
 .env
+*.local
+
+# Keep example files
+!**/*.example
+!**/.env.example
+
+# Data
 data/*.csv
 data/*.parquet
+data/*.json
+
+# Models
 models/*.joblib
+models/*.pkl
+
+# Streamlit
 .streamlit/
+.streamlit_*.log
+
+# Testing
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
 *.log
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# OS
+Thumbs.db
