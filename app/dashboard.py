@@ -410,7 +410,7 @@ try:
     plot_df = df.tail(200)
     
     fig = go.Figure(data=[go.Candlestick(
-        x=plot_df.index,
+        x=plot_df['timestamp'],
         open=plot_df['open'],
         high=plot_df['high'],
         low=plot_df['low'],
