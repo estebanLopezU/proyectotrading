@@ -261,7 +261,7 @@ with st.sidebar:
     st.markdown('<div class="tv-control-title" style="font-size:20px;">Control Panel</div>', unsafe_allow_html=True)
     
     symbol = st.text_input("Símbolo (ccxt)", value=SETTINGS.symbol)
-    timeframe = st.selectbox("Temporalidad", list(SETTINGS.timeframes), index=0)
+    timeframe = st.selectbox("Temporalidad", list(SETTINGS.timeframes), index=3)
     refresh = st.select_slider("Auto-refresh (s)", options=[5, 15, 30, 60], value=15)
     
     ml_source = st.radio("Fuente de predicción ML", ["Local", "API (/predict)"])
@@ -370,32 +370,64 @@ try:
     
     with signal_col2:
         st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
-        st.markdown('<div class="tv-control-title">🤖 Predicción ML</div>', unsafe_allow_html=True)
-        
+        st.markdown('<div class="tv-control-title">Señal de Apuesta (ML validado)</div>', unsafe_allow_html=True)
+
         if ml_pred.get("ok"):
             prob_up = ml_pred.get("prob_up", 0.5)
             prob_down = ml_pred.get("prob_down", 0.5)
-            
-            sig_color = "tv-signal-buy" if "COMPRAR" in ml_pred.get("label", "") else \
-                       "tv-signal-sell" if "VENDER" in ml_pred.get("label", "") else "tv-signal-neutral"
-            
-            st.markdown(tv_signal_indicator(
-                ml_pred.get("label", "SIN MODELO"),
-                prob_up,
-                sig_color
-            ), unsafe_allow_html=True)
-            
-            st.progress(prob_up)
-            direction_color = "#00c853" if prob_up >= 0.5 else "#ff1744"
-            direction_text = "📈 SUBE" if prob_up >= 0.5 else "📉 BAJA"
-            st.markdown(f"<p style='text-align:center;font-weight:700;color:{direction_color};'>{direction_text}</p>", unsafe_allow_html=True)
-            st.caption(f"P(Sube)={prob_up:.1%} • P(Baja)={prob_down:.1%} • Precisión={ml_pred.get('precision',0):.0%}")
-            
-            prec = ml_pred.get("precision", 0)
-            if ("COMPRAR" in ml_pred.get("label","") or "VENDER" in ml_pred.get("label","")) and prec >= 0.80:
-                r = send_telegram(f"{symbol} {timeframe} {ml_pred['label']} p={ml_pred.get('proba',0):.2f} prec={prec:.0%}")
+            label = ml_pred.get("label", "SIN SENAL")
+            fire = bool(ml_pred.get("fire"))
+            prec = ml_pred.get("precision", 0.0)
+            lb = ml_pred.get("wilson_lb", 0.0)
+            n_test = ml_pred.get("n_test", 0)
+            mtf = ml_pred.get("model_timeframe", timeframe)
+            hz = ml_pred.get("horizon_velas", 0)
+            tdesc = ml_pred.get("target_desc", "")
+            min_ret = ml_pred.get("min_ret", 0.0)
+
+            if fire and "COMPRAR" in label:
+                banner = ("<div style='padding:14px;border-radius:10px;"
+                          "background:linear-gradient(135deg,#0b3d20,#00c853);color:#fff;"
+                          "text-align:center;font-size:22px;font-weight:800;'>"
+                          "SEÑAL: COMPRAR (LARGO)</div>")
+            elif fire and "VENDER" in label:
+                banner = ("<div style='padding:14px;border-radius:10px;"
+                          "background:linear-gradient(135deg,#4a0b16,#ff1744);color:#fff;"
+                          "text-align:center;font-size:22px;font-weight:800;'>"
+                          "SEÑAL: VENDER (CORTO)</div>")
+            else:
+                banner = ("<div style='padding:12px;border-radius:10px;background:#2a2e39;"
+                          "color:#b2b5bd;text-align:center;font-size:15px;font-weight:700;'>"
+                          "SIN SEÑAL - el edge validado no se cumple ahora</div>")
+            st.markdown(banner, unsafe_allow_html=True)
+
+            st.progress(min(max(prob_up, 0.0), 1.0))
+            st.markdown(
+                f"<p style='text-align:center;font-weight:700;margin:6px 0;'>"
+                f"P(subida &gt; {min_ret:.1%}) = {prob_up:.1%}</p>", unsafe_allow_html=True)
+            st.caption(f"Modelo: {mtf} | horizonte: {hz} velas | sesgo: {ml_pred.get('direction','-')}")
+            if tdesc:
+                st.caption(f"Objetivo del modelo: {tdesc}")
+            st.markdown(
+                f"<div style='font-size:12px;color:#b2b5bd;'>Precision validada: "
+                f"<b style='color:#00c853'>{prec:.1%}</b> | IC95% (Wilson LB): <b>{lb:.1%}</b> "
+                f"| muestras: <b>{n_test}</b></div>", unsafe_allow_html=True)
+            cond = ml_pred.get("conditions", {})
+            if cond:
+                req = cond.get("cond_requerida", "-")
+                cumple = cond.get("cond_cumplida", False)
+                st.caption(f"Condicion requerida: {req} -> {'cumplida' if cumple else 'NO cumplida'}")
+
+            if fire and prec >= 0.80:
+                r = send_telegram(
+                    f"{symbol} {mtf} {label} p={ml_pred.get('proba', 0):.2f} "
+                    f"prec={prec:.0%} LB={lb:.0%}")
                 if r.get("ok"):
-                    st.toast("🔔 Alerta Telegram enviada")
+                    st.toast("Alerta Telegram enviada")
+
+            st.markdown("<div style='font-size:11px;color:#8a8f98;margin-top:8px;'>"
+                        "Educativo. Precision historica validada; no garantiza el futuro. "
+                        "Gestiona tu riesgo.</div>", unsafe_allow_html=True)
         else:
             st.info(f"ML no disponible: {ml_pred.get('label','Modelo no entrenado')}")
         

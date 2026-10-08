@@ -1,7 +1,10 @@
 """src/scorer.py
-Scorer de senales con metrica honesta de precision y confianza (validacion out-of-sample).
-"""
+Scorer de senales con metrica HONESTA (validacion walk-forward + Wilson LB).
 
+Prioriza los bundles "signal_*" (regla validada). Solo emite COMPRAR/VENDER
+cuando la regla quedo validada con Wilson LB >= 80% y las condiciones actuales
+la cumplen. Siempre devuelve la probabilidad direccional.
+"""
 import math
 import glob
 import os
@@ -9,12 +12,11 @@ import sys
 from pathlib import Path
 
 import joblib
-import numpy as np  # sin importar np: wilson_lb usaba np.sqrt sin importar numpy
+import numpy as np
 import pandas as pd
 
 
 def _safe_float(x, default: float = 0.0) -> float:
-    """Convert to float, returning default if None or NaN."""
     try:
         fx = float(x)
     except (TypeError, ValueError):
@@ -24,14 +26,10 @@ def _safe_float(x, default: float = 0.0) -> float:
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.ingest_ext import fetch_ohlcv_paginated
+from src.ingest import get_ohlcv
 from src.indicators import add_indicators
 from src.features_v2 import add_features_v2
 from src.features import latest_features
-
-CONF = {"adx_min": 20, "rsi_oversold": 40, "bb_pct_max_lower": 0.15,
-        "roc_5_max": 0.0, "vol_ratio_min": 1.2, "trend_up_min": 0.001,
-        "trend_dn_max": -0.001}
 
 
 def wilson_lb(p: float, n: int, z: float = 1.96) -> float:
@@ -43,23 +41,16 @@ def wilson_lb(p: float, n: int, z: float = 1.96) -> float:
     return float((center - margin) / denom)
 
 
-
 def load_bundle(symbol: str, timeframe: str):
+    """Prioriza modelos de senal validados (signal_*)."""
     safe = symbol.replace("/", "_")
-    prefs = [
-        "models/cal_BTC_USDT_15m_h3.joblib",
-        "models/cal_BTC_USDT_15m_h5.joblib",
-        "models/cal_BTC_USDT_15m.joblib",
-        "models/cal_BTC_USDT_1m_h3.joblib",
-        "models/cal_BTC_USDT_1m.joblib",
-    ]
-    for p in prefs:
-        if os.path.exists(p):
-            return joblib.load(p), p
-    cal = sorted(glob.glob("models/cal_*.joblib"))
-    if cal:
-        return joblib.load(cal[0]), cal[0]
-    for p in sorted(glob.glob("models/rf_*.joblib")):
+    hits = sorted(glob.glob(f"models/signal_{safe}_{timeframe}_h*.joblib"))
+    if hits:
+        return joblib.load(hits[-1]), hits[-1]
+    any_sig = sorted(glob.glob(f"models/signal_{safe}_*.joblib"))
+    if any_sig:
+        return joblib.load(any_sig[-1]), any_sig[-1]
+    for p in sorted(glob.glob("models/cal_*.joblib")) + sorted(glob.glob("models/rf_*.joblib")):
         try:
             return joblib.load(p), p
         except Exception:
@@ -67,120 +58,114 @@ def load_bundle(symbol: str, timeframe: str):
     return None, None
 
 
-def score_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6):
+def _cond_holds(cond: str, d2) -> bool:
+    """Evalua la condicion de la regla sobre la ultima vela de d2 (features_v2)."""
+    if d2 is None or len(d2) == 0:
+        return True
+    try:
+        if cond == "trend_dn":
+            return float(d2["trend_strength"].iloc[-1]) < 0
+        if cond == "trend_up":
+            return float(d2["trend_strength"].iloc[-1]) > 0
+        if cond == "adx_hi":
+            return float(d2["adx14"].iloc[-1]) > 25
+        if cond == "atr_hi":
+            return float(d2["atr_pct"].iloc[-1]) > float(d2["atr_pct"].median())
+        if cond == "vol_hi":
+            return float(d2["vol_ratio"].iloc[-1]) > 1.2
+        return True  # "none"
+    except Exception:
+        return True
+
+def score_signal(df, symbol: str, timeframe: str = "1h", horizon: int = 3):
+    """Predice direccion y, si la regla validada lo permite, emite COMPRAR/VENDER."""
     b, path = load_bundle(symbol, timeframe)
     meta = {"label": "SIN MODELO", "proba": None, "confidence": 0.0, "precision": 0.0,
             "n_test": 0, "calibration": False, "note": "sin modelo entrenado",
-            "ok": False, "prob_up": None, "prob_down": None, "horizon_velas": None}
-
+            "ok": False, "prob_up": None, "prob_down": None, "horizon_velas": None,
+            "wilson_lb": 0.0, "rule": None, "model_timeframe": None, "fire": False}
     if b is None:
         return meta
 
     try:
-        last = df.iloc[-1].to_dict()
-        atr = _safe_float(last.get("atr_pct", 0.0), 0.0)
-        atr_min = _safe_float(b.get("atr_min", 0), 0.0)
-        atr_bajo = bool(atr_min and atr < atr_min)
-
         cols = b["cols"]
-        if cols and cols[0] in ("trend_strength", "rsi14") and "stoch_k" in cols:
-            d2 = add_features_v2(df)
+        model_tf = b.get("timeframe", timeframe)
+        # Datos frescos en el timeframe del modelo (correcto aunque el grafico sea otro tf)
+        try:
+            res = get_ohlcv(symbol, model_tf, 300)
+            src_df = res.df
+            data_note = f"fuente={res.source}"
+        except Exception:
+            src_df = df
+            data_note = "df_recibido"
+
+        is_v2 = bool(cols) and cols[0] in ("trend_strength", "rsi14") and "stoch_k" in cols
+        if is_v2:
+            d2 = add_features_v2(src_df)
             X = d2[cols].tail(1)
-            note = "features_v2"
         else:
-            X = latest_features(df, cols)
-            note = "features_v1"
+            d2 = None
+            X = latest_features(src_df, cols)
 
-        model = b["model"]
-
-        # Probabilidad direccional SIEMPRE primero (aunque el filtro de ATR bloquee la senal):
-        # proba = P(sube en +horizon velas); prob_down = 1 - proba
-        proba = float(model.predict_proba(X)[0][1])
-        prob_up = proba
-        prob_down = 1.0 - proba
+        proba = float(b["model"].predict_proba(X)[0][1])
+        prob_up, prob_down = proba, 1.0 - proba
         horizon_velas = int(b.get("horizon", 0) or 0)
 
-        if atr_bajo:
-            return {"label": "SIN SENAL (ruido)", "proba": proba, "confidence": 0.0,
-                    "precision": 0.0, "n_test": 0, "calibration": False,
-                    "conditions": {"adx": 0.0, "rsi": 50.0, "bb_pct": 0.5, "vol_ratio": 1.0,
-                                   "trend_strength": 0.0, "roc_5": 0.0, "close_pos": 0.5},
-                    "conditions_data": "atr_bajo", "n_cond": 0, "meta": meta,
-                    "ok": True, "prob_up": prob_up, "prob_down": prob_down,
-                    "horizon_velas": horizon_velas,
-                    "direction": "SUBE" if prob_up >= 0.5 else "BAJA",
-                    "note": "ATR bajo: sin senal de entrada, pero la probabilidad direccional sigue siendo valida"}
-        adx = _safe_float(last.get("adx14", 0), 0.0)
-        rsi = _safe_float(last.get("rsi14", 0), 50.0)
-        bb_pct = _safe_float(last.get("bb_pct", 0.5), 0.5)
-        vol_ratio = _safe_float(last.get("vol_ratio", 1.0), 1.0)
-        trend_s = _safe_float(last.get("trend_strength", 0), 0.0)
-        roc_5 = _safe_float(last.get("roc_5", 0), 0.0)
-        close_pos = _safe_float(last.get("close_pos_range", 0.5), 0.5)
+        # ---- Camino NUEVO: regla validada (signal_*) ----
+        rule = b.get("rule")
+        if rule and _safe_float(rule.get("wilson_lb", 0), 0.0) >= 0.80:
+            direction = rule["direction"]
+            thr = float(rule["proba_thr"])
+            cond = rule["cond"]
+            prec = float(rule["precision"])
+            lb = float(rule["wilson_lb"])
+            n = int(rule["n"])
+            holds = _cond_holds(cond, d2)
+            if direction == "ALTA":
+                fire = bool(proba >= thr and holds)
+                thr_txt = f"proba>={thr:.2f}"
+            else:
+                fire = bool(proba <= (1 - thr) and holds)
+                thr_txt = f"proba<={1 - thr:.2f}"
+            label = ("COMPRAR" if direction == "ALTA" else "VENDER") if fire else "SIN SENAL"
+            return {
+                "label": label, "proba": proba, "confidence": lb, "precision": prec,
+                "n_test": n, "calibration": bool(b.get("calibrated")),
+                "thr_hi": thr if direction == "ALTA" else 1 - thr,
+                "thr_lo": 1 - thr if direction == "BAJA" else thr,
+                "conditions": {"activas": [cond] if holds else [], "n_cond": 1 if holds else 0,
+                               "cond_requerida": cond, "cond_cumplida": holds},
+                "final": proba if fire else None, "label_final": label,
+                "note": (f"Regla: {direction} {thr_txt} + {cond} | precision={prec:.1%} "
+                         f"WilsonLB={lb:.1%} (n={n}) | {data_note}"),
+                "calibrated": True, "path": path, "prec_validada": prec, "ic_wilson": lb,
+                "ok": True, "prob_up": prob_up, "prob_down": prob_down,
+                "horizon_velas": horizon_velas, "direction": "SUBE" if prob_up >= 0.5 else "BAJA",
+                "wilson_lb": lb, "rule": rule, "model_timeframe": model_tf, "fire": fire,
+                "min_ret": _safe_float(b.get("min_ret", 0.0), 0.0),
+                "target_desc": b.get("target_desc", ""),
+            }
 
-        active = []
-        if adx >= CONF["adx_min"]:
-            active.append("ADX>=%d" % int(adx))
-        if rsi <= CONF["rsi_oversold"]:
-            active.append("RSI<=%d" % int(rsi))
-        if bb_pct <= CONF["bb_pct_max_lower"]:
-            active.append("BB_bajo_%d" % (bb_pct * 100))
-        if roc_5 <= CONF["roc_5_max"]:
-            active.append("roc_5<=0")
-        if vol_ratio >= CONF["vol_ratio_min"]:
-            active.append("vol_relativo")
-        if trend_s >= CONF["trend_up_min"]:
-            active.append("trend_alcista")
-        if trend_s <= CONF["trend_dn_max"]:
-            active.append("trend_bajista")
-
-        n_cond = len(active)
-        conf = 0.0
-        if n_cond >= 2:
-            conf = min(0.95, 0.5 + 0.08 * (n_cond - 2))
-
-        proba = prob_up  # ya calculado arriba (P(sube))
-        calibrated = bool(b.get("calibrated", False))
+        # ---- Camino ANTIGUO (bundles cal_/rf_ sin regla): solo probabilidad ----
         prec = _safe_float(b.get("precision_hi", 0), 0.0)
-        n_test = int(b.get("n_test", 0)) or 0
-        thr_hi = float(b.get("thr_hi", 0.60))
-        thr_lo = float(b.get("thr_lo", 0.40))
-
-        if calibrated and prec >= 0.80 and thr_hi <= 0.60:
-            lab, fp = "COMPRAR", proba
-        elif calibrated and prec >= 0.80 and thr_lo <= 0.40:
-            lab, fp = "VENDER", proba
-        else:
-            lab, fp = "SIN SENAL", None
-
-        cond_activas = {
-            "ADX>=%d" % int(adx): adx >= CONF["adx_min"],
-            "RSI<=%d" % int(rsi): rsi <= CONF["rsi_oversold"],
-            "BB_bajo_%d" % (bb_pct * 100): bb_pct <= CONF["bb_pct_max_lower"] * 100,
-            "roc_5<=0": roc_5 <= CONF["roc_5_max"],
-            "vol_relativo": vol_ratio >= CONF["vol_ratio_min"],
-            "trend_alcista": trend_s >= CONF["trend_up_min"],
-            "trend_bajista": trend_s <= CONF["trend_dn_max"],
-        }
-        active_cond = [k for k, v in cond_activas.items() if v]
-
         return {
-            "label": lab, "proba": proba, "confidence": conf,
-            "precision": prec, "n_test": n_test, "calibration": calibrated,
-            "thr_hi": float(b.get("thr_hi", 0.60)), "thr_lo": float(b.get("thr_lo", 0.40)),
-            "conditions": {"activas": active_cond, "n_cond": n_cond, "adx": adx, "rsi": rsi,
-                           "bb_pct": bb_pct, "vol_ratio": vol_ratio, "trend_strength": trend_s},
-            "final": fp, "label_final": lab,
-            "note": f"prec_hist={prec:.1%} ic_wilson={prec:.1%} (n={n_test})",
-            "calibrated": calibrated, "path": path,
-            "prec_validada": prec, "ic_wilson": conf,
-            "ok": True,
-            "prob_up": prob_up, "prob_down": prob_down,
-            "horizon_velas": horizon_velas,
+            "label": "SIN SENAL (sin regla validada)", "proba": proba, "confidence": 0.0,
+            "precision": prec, "n_test": int(b.get("n_test", 0) or 0),
+            "calibration": bool(b.get("calibrated")),
+            "thr_hi": float(b.get("thr_hi", 0.6)), "thr_lo": float(b.get("thr_lo", 0.4)),
+            "conditions": {"activas": [], "n_cond": 0},
+            "final": None, "label_final": "SIN SENAL",
+            "note": (f"Modelo sin regla validada (precision_hi={prec:.1%}). "
+                     f"Reentrena con scripts/train_signal.py | {data_note}"),
+            "calibrated": bool(b.get("calibrated")), "path": path,
+            "prec_validada": prec, "ic_wilson": 0.0, "ok": True,
+            "prob_up": prob_up, "prob_down": prob_down, "horizon_velas": horizon_velas,
             "direction": "SUBE" if prob_up >= 0.5 else "BAJA",
+            "wilson_lb": 0.0, "rule": None, "model_timeframe": model_tf, "fire": False,
         }
-
     except Exception as e:
         return {"label": "ERROR", "proba": None, "confidence": 0.0, "precision": 0.0,
-                "n_test": 0, "calibration": False, "note": str(e)[:100],
-                "ok": False, "prob_up": None, "prob_down": None, "horizon_velas": None}
+                "n_test": 0, "calibration": False, "note": str(e)[:120], "ok": False,
+                "prob_up": None, "prob_down": None, "horizon_velas": None,
+                "wilson_lb": 0.0, "rule": None, "model_timeframe": None, "fire": False}
+
