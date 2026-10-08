@@ -2,7 +2,18 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+import math
+
 from loguru import logger
+
+
+def _safe_float(x, default: float = 0.0) -> float:
+    """Convert to float, returning default if None or NaN."""
+    try:
+        fx = float(x)
+    except (TypeError, ValueError):
+        return default
+    return fx if not math.isnan(fx) else default
 
 
 def setup_logger():

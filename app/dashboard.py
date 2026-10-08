@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 from config.settings import SETTINGS
 from src.indicators import add_indicators, latest_signal
 from src.ingest import fetch_ticker_24h, get_ohlcv
-from src.utils import fmt_money, fmt_pct, setup_logger
+from src.utils import _safe_float, fmt_money, fmt_pct, setup_logger
 from src.alerts import send_telegram
 from src.ml_panel import ml_signal
 
@@ -312,190 +312,190 @@ def load_data(symbol_: str, timeframe_: str):
 # =============================================
 # Main Dashboard Content
 # =============================================
-    try:
-        with st.spinner("🔄 Conectando a Binance..."):
-            df, stale, source, latency_ms, tick = load_data(symbol, timeframe)
+try:
+    with st.spinner("🔄 Conectando a Binance..."):
+        df, stale, source, latency_ms, tick = load_data(symbol, timeframe)
     
-        if df is None or df.empty:
-            st.warning("⚠️ Sin velas disponibles. Verifique conexión y símbolo.")
-            st.stop()
+    if df is None or df.empty:
+        st.warning("⚠️ Sin velas disponibles. Verifique conexión y símbolo.")
+        st.stop()
     
-        last = df.iloc[-1]
-        price = float(tick.get("last") or last["close"])
-        sig = latest_signal(df)
-        ml_pred = ml_signal(df, symbol, timeframe)
+    last = df.iloc[-1]
+    price = float(tick.get("last") or last["close"])
+    sig = latest_signal(df)
+    ml_pred = ml_signal(df, symbol, timeframe)
     
-        # =============================================
-        # Métricas Principales con Gauges TradingView
-        # =============================================
-        st.subheader("📊 Métricas Principales")
+    # =============================================
+    # Métricas Principales con Gauges TradingView
+    # =============================================
+    st.subheader("📊 Métricas Principales")
     
-        row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
+    row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
     
-        with row1_col1:
-            rsi_val = last.get('rsi14', 50)
-            color_cls = "tv-signal-neutral" if rsi_val < 70 else "tv-signal-buy"
-            st.markdown(tv_gauge(rsi_val, "RSI 14", color_cls), unsafe_allow_html=True)
-            st.markdown(tv_metric_card("Precio", fmt_money(price), 
-                f"{_safe_float(tick.get('pct_24h'), 0):+.2%} 24h"))
+    with row1_col1:
+        rsi_val = last.get('rsi14', 50)
+        color_cls = "tv-signal-neutral" if rsi_val < 70 else "tv-signal-buy"
+        st.markdown(tv_gauge(rsi_val, "RSI 14", color_cls), unsafe_allow_html=True)
+        st.markdown(tv_metric_card("Precio", fmt_money(price), 
+            f"{_safe_float(tick.get('pct_24h'), 0):+.2%} 24h"))
     
-        with row1_col2:
-            st.markdown(tv_gauge(50, "Win Rate", "tv-signal-buy"), unsafe_allow_html=True)
-            st.markdown(tv_metric_card("Alto 24h", fmt_money(
-                float(tick.get("high_24h") or df["high"].tail(24).max()))))
+    with row1_col2:
+        st.markdown(tv_gauge(50, "Win Rate", "tv-signal-buy"), unsafe_allow_html=True)
+        st.markdown(tv_metric_card("Alto 24h", fmt_money(
+            float(tick.get("high_24h") or df["high"].tail(24).max()))))
     
-        with row1_col3:
-            st.markdown(tv_gauge(30, "RR", "tv-signal-buy"), unsafe_allow_html=True)
-            st.markdown(tv_metric_card("Bajo 24h", fmt_money(
-                float(tick.get("low_24h") or df["low"].tail(24).min()))))
+    with row1_col3:
+        st.markdown(tv_gauge(30, "RR", "tv-signal-buy"), unsafe_allow_html=True)
+        st.markdown(tv_metric_card("Bajo 24h", fmt_money(
+            float(tick.get("low_24h") or df["low"].tail(24).min()))))
     
-        with row1_col4:
-            atr_pct = last.get("atr_pct", float("nan"))
-            st.markdown(tv_metric_card("ATR %", 
-                f"{float(atr_pct):.2f}%" if pd.notna(atr_pct) else "-",
-                            f"Vol: {df['volume'].iloc[-1]:,.0f}"))
+    with row1_col4:
+        atr_pct = last.get("atr_pct", float("nan"))
+        st.markdown(tv_metric_card("ATR %", 
+            f"{float(atr_pct):.2f}%" if pd.notna(atr_pct) else "-",
+                        f"Vol: {df['volume'].iloc[-1]:,.0f}"))
 
-        estado = "🟢 LIVE" if not stale else "🟡 STALE (cache)"
-        st.info(f"📡 Estado: {estado} | Fuente: {source} | Latencia: {latency_ms:.0f}ms | Velas: {len(df)}")
+    estado = "🟢 LIVE" if not stale else "🟡 STALE (cache)"
+    st.info(f"📡 Estado: {estado} | Fuente: {source} | Latencia: {latency_ms:.0f}ms | Velas: {len(df)}")
     
-        st.subheader("🎯 Señales Técnicas y ML")
-        signal_col1, signal_col2 = st.columns(2)
+    st.subheader("🎯 Señales Técnicas y ML")
+    signal_col1, signal_col2 = st.columns(2)
     
-        with signal_col1:
-            st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
-            st.markdown('<div class="tv-control-title">📋 Señal Regla</div>', unsafe_allow_html=True)
-            st.markdown(f"**Label:** {sig['label']} | **Score:** {sig['score']}")
-            st.markdown(f"**Razones:** {' | '.join(sig['reasons']) if sig['reasons'] else 'Ninguna'}")
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-        with signal_col2:
-            st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
-            st.markdown('<div class="tv-control-title">🤖 Predicción ML</div>', unsafe_allow_html=True)
-        
-            if ml_pred.get("ok"):
-                prob_up = ml_pred.get("prob_up", 0.5)
-                prob_down = ml_pred.get("prob_down", 0.5)
-            
-                sig_color = "tv-signal-buy" if "COMPRAR" in ml_pred.get("label", "") else \
-                           "tv-signal-sell" if "VENDER" in ml_pred.get("label", "") else "tv-signal-neutral"
-            
-                st.markdown(tv_signal_indicator(
-                    ml_pred.get("label", "SIN MODELO"),
-                    prob_up,
-                    sig_color
-                ), unsafe_allow_html=True)
-            
-                st.progress(prob_up)
-                direction_color = "#00c853" if prob_up >= 0.5 else "#ff1744"
-                direction_text = "📈 SUBE" if prob_up >= 0.5 else "📉 BAJA"
-                st.markdown(f"<p style='text-align:center;font-weight:700;color:{direction_color};'>{direction_text}</p>", unsafe_allow_html=True)
-                st.caption(f"P(Sube)={prob_up:.1%} • P(Baja)={prob_down:.1%} • Precisión={ml_pred.get('precision',0):.0%}")
-            
-                prec = ml_pred.get("precision", 0)
-                if ("COMPRAR" in ml_pred.get("label","") or "VENDER" in ml_pred.get("label","")) and prec >= 0.80:
-                    r = send_telegram(f"{symbol} {timeframe} {ml_pred['label']} p={ml_pred.get('proba',0):.2f} prec={prec:.0%}")
-                    if r.get("ok"):
-                        st.toast("🔔 Alerta Telegram enviada")
-            else:
-                st.info(f"ML no disponible: {ml_pred.get('label','Modelo no entrenado')}")
-        
-            st.markdown('</div>', unsafe_allow_html=True)
-    
+    with signal_col1:
+        st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
+        st.markdown('<div class="tv-control-title">📋 Señal Regla</div>', unsafe_allow_html=True)
+        st.markdown(f"**Label:** {sig['label']} | **Score:** {sig['score']}")
+        st.markdown(f"**Razones:** {' | '.join(sig['reasons']) if sig['reasons'] else 'Ninguna'}")
         st.markdown('</div>', unsafe_allow_html=True)
     
-        # =============================================
-        # Chart - Gráfico de Velas TradingView
-        # =============================================
-        st.subheader("📈 Gráfico de Velas")
-        plot_df = df.tail(200)
+    with signal_col2:
+        st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
+        st.markdown('<div class="tv-control-title">🤖 Predicción ML</div>', unsafe_allow_html=True)
+        
+        if ml_pred.get("ok"):
+            prob_up = ml_pred.get("prob_up", 0.5)
+            prob_down = ml_pred.get("prob_down", 0.5)
+            
+            sig_color = "tv-signal-buy" if "COMPRAR" in ml_pred.get("label", "") else \
+                       "tv-signal-sell" if "VENDER" in ml_pred.get("label", "") else "tv-signal-neutral"
+            
+            st.markdown(tv_signal_indicator(
+                ml_pred.get("label", "SIN MODELO"),
+                prob_up,
+                sig_color
+            ), unsafe_allow_html=True)
+            
+            st.progress(prob_up)
+            direction_color = "#00c853" if prob_up >= 0.5 else "#ff1744"
+            direction_text = "📈 SUBE" if prob_up >= 0.5 else "📉 BAJA"
+            st.markdown(f"<p style='text-align:center;font-weight:700;color:{direction_color};'>{direction_text}</p>", unsafe_allow_html=True)
+            st.caption(f"P(Sube)={prob_up:.1%} • P(Baja)={prob_down:.1%} • Precisión={ml_pred.get('precision',0):.0%}")
+            
+            prec = ml_pred.get("precision", 0)
+            if ("COMPRAR" in ml_pred.get("label","") or "VENDER" in ml_pred.get("label","")) and prec >= 0.80:
+                r = send_telegram(f"{symbol} {timeframe} {ml_pred['label']} p={ml_pred.get('proba',0):.2f} prec={prec:.0%}")
+                if r.get("ok"):
+                    st.toast("🔔 Alerta Telegram enviada")
+        else:
+            st.info(f"ML no disponible: {ml_pred.get('label','Modelo no entrenado')}")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
-        fig = go.Figure(data=[go.Candlestick(
-            x=plot_df.index,
-            open=plot_df['open'],
-            high=plot_df['high'],
-            low=plot_df['low'],
-            close=plot_df['close'],
-            increasing_line_color='#00c853',
-            decreasing_line_color='#ff1744',
-            name=symbol
-        )])
+    st.markdown('</div>', unsafe_allow_html=True)
     
-        fig.update_layout(
-            plot_bgcolor='#1e222d',
-            paper_bgcolor='#1e222d',
-            font=dict(color='#e1e6ee'),
-            xaxis=dict(gridcolor='#2a2e39', zerolinecolor='#2a2e39'),
-            yaxis=dict(gridcolor='#2a2e39', zerolinecolor='#2a2e39'),
-            margin=dict(l=20, r=20, t=40, b=20),
-            height=500,
-            xaxis_rangeslider_visible=False,
-        )
-        st.plotly_chart(fig, widt='stretch')
+    # =============================================
+    # Chart - Gráfico de Velas TradingView
+    # =============================================
+    st.subheader("📈 Gráfico de Velas")
+    plot_df = df.tail(200)
     
-        # =============================================
-        # Paper Trading TradingView Style
-        # =============================================
-        st.subheader("💼 Paper Trading Simulado ($10,000)")
+    fig = go.Figure(data=[go.Candlestick(
+        x=plot_df.index,
+        open=plot_df['open'],
+        high=plot_df['high'],
+        low=plot_df['low'],
+        close=plot_df['close'],
+        increasing_line_color='#00c853',
+        decreasing_line_color='#ff1744',
+        name=symbol
+    )])
     
-        if "paper_cash" not in st.session_state:
-            st.session_state.paper_cash = 10000.0
+    fig.update_layout(
+        plot_bgcolor='#1e222d',
+        paper_bgcolor='#1e222d',
+        font=dict(color='#e1e6ee'),
+        xaxis=dict(gridcolor='#2a2e39', zerolinecolor='#2a2e39'),
+        yaxis=dict(gridcolor='#2a2e39', zerolinecolor='#2a2e39'),
+        margin=dict(l=20, r=20, t=40, b=20),
+        height=500,
+        xaxis_rangeslider_visible=False,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # =============================================
+    # Paper Trading TradingView Style
+    # =============================================
+    st.subheader("💼 Paper Trading Simulado ($10,000)")
+    
+    if "paper_cash" not in st.session_state:
+        st.session_state.paper_cash = 10000.0
+        st.session_state.paper_qty = 0.0
+        st.session_state.paper_log = []
+    
+    px = float(last["close"])
+    eq = st.session_state.paper_cash + st.session_state.paper_qty * px
+    
+    paper_col1, paper_col2, paper_col3 = st.columns(3)
+    with paper_col1:
+        st.markdown(tv_metric_card("Patrimonio", f"${eq:,.2f}", "Estado: ACTIVO"))
+    with paper_col2:
+        st.markdown(tv_metric_card("Efectivo", f"${st.session_state.paper_cash:,.2f}"))
+    with paper_col3:
+        st.markdown(tv_metric_card("Posición Sim.", f"{st.session_state.paper_qty:.6f}"))
+    
+    b1, b2 = st.columns(2)
+    if b1.button("📈 Comprar sim (todo)", use_container_width=True):
+        if st.session_state.paper_qty == 0 and st.session_state.paper_cash > 0:
+            q = (st.session_state.paper_cash / px) * 0.99925
+            st.session_state.paper_qty = q
+            st.session_state.paper_cash = 0.0
+            st.session_state.paper_log.append(f"BUY ${px:.2f} x{q:.6f}")
+            st.rerun()
+    
+    if b2.button("📉 Vender sim (todo)", use_container_width=True):
+        if st.session_state.paper_qty > 0:
+            st.session_state.paper_cash = st.session_state.paper_qty * px * 0.99925
+            st.session_state.paper_log.append(f"SELL ${px:.2f} -> ${st.session_state.paper_cash:,.2f}")
             st.session_state.paper_qty = 0.0
-            st.session_state.paper_log = []
+            st.rerun()
     
-        px = float(last["close"])
-        eq = st.session_state.paper_cash + st.session_state.paper_qty * px
-    
-        paper_col1, paper_col2, paper_col3 = st.columns(3)
-        with paper_col1:
-            st.markdown(tv_metric_card("Patrimonio", f"${eq:,.2f}", "Estado: ACTIVO"))
-        with paper_col2:
-            st.markdown(tv_metric_card("Efectivo", f"${st.session_state.paper_cash:,.2f}"))
-        with paper_col3:
-            st.markdown(tv_metric_card("Posición Sim.", f"{st.session_state.paper_qty:.6f}"))
-    
-        b1, b2 = st.columns(2)
-        if b1.button("📈 Comprar sim (todo)", widt='stretch'):
-            if st.session_state.paper_qty == 0 and st.session_state.paper_cash > 0:
-                q = (st.session_state.paper_cash / px) * 0.99925
-                st.session_state.paper_qty = q
-                st.session_state.paper_cash = 0.0
-                st.session_state.paper_log.append(f"BUY ${px:.2f} x{q:.6f}")
-                st.rerun()
-    
-        if b2.button("📉 Vender sim (todo)", widt='stretch'):
-            if st.session_state.paper_qty > 0:
-                st.session_state.paper_cash = st.session_state.paper_qty * px * 0.99925
-                st.session_state.paper_log.append(f"SELL ${px:.2f} -> ${st.session_state.paper_cash:,.2f}")
-                st.session_state.paper_qty = 0.0
-                st.rerun()
-    
-        if st.session_state.paper_log:
-            st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
-            st.markdown('<div class="tv-control-title">📋 Registro de Operaciones Recientes</div>', unsafe_allow_html=True)
-            for log_entry in st.session_state.paper_log[-5:]:
-                st.markdown(f"<div style='padding:8px;background:var(--bg-tertiary);border-radius:6px;margin:8px 0;font-size:13px;'>{log_entry}</div>", unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-        # =============================================
-        # Footer TradingView
-        # =============================================
-        st.markdown('<div class="tv-header">', unsafe_allow_html=True)
-        st.markdown("""
-        <div style="text-align: center; padding: 20px;">
-            <div style="color: var(--text-secondary); font-size: 12px; margin-bottom: 10px;">
-                🚀 Prototipo Educativo Fase 1-2-3-4 • No ejecuta órdenes reales
-            </div>
-            <div style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; font-size: 11px; color: var(--text-secondary);">
-                <span>✅ ML con Validación Honesta (≥80% precisión)</span>
-                <span>✅ Paper Trading $10k Simulado</span>
-                <span>✅ Alertas Telegram Integradas</span>
-                <span>✅ Hosteable en la nube</span>
-                <span>✅ Dashboard con Estilo TradingView</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    if st.session_state.paper_log:
+        st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
+        st.markdown('<div class="tv-control-title">📋 Registro de Operaciones Recientes</div>', unsafe_allow_html=True)
+        for log_entry in st.session_state.paper_log[-5:]:
+            st.markdown(f"<div style='padding:8px;background:var(--bg-tertiary);border-radius:6px;margin:8px 0;font-size:13px;'>{log_entry}</div>", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
+    
+    # =============================================
+    # Footer TradingView
+    # =============================================
+    st.markdown('<div class="tv-header">', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="text-align: center; padding: 20px;">
+        <div style="color: var(--text-secondary); font-size: 12px; margin-bottom: 10px;">
+            🚀 Prototipo Educativo Fase 1-2-3-4 • No ejecuta órdenes reales
+        </div>
+        <div style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; font-size: 11px; color: var(--text-secondary);">
+            <span>✅ ML con Validación Honesta (≥80% precisión)</span>
+            <span>✅ Paper Trading $10k Simulado</span>
+            <span>✅ Alertas Telegram Integradas</span>
+            <span>✅ Hosteable en la nube</span>
+            <span>✅ Dashboard con Estilo TradingView</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    except Exception as e:
-        st.error(f"❌ Error en el dashboard: {e}")
-        st.exception(e)
+except Exception as e:
+    st.error(f"❌ Error en el dashboard: {e}")
+    st.exception(e)
