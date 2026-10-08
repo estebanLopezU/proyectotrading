@@ -430,7 +430,7 @@ def load_data(symbol_: str, timeframe_: str):
             height=500,
             xaxis_rangeslider_visible=False,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, widt='stretch')
     
         # =============================================
         # Paper Trading TradingView Style
@@ -454,7 +454,7 @@ def load_data(symbol_: str, timeframe_: str):
             st.markdown(tv_metric_card("Posición Sim.", f"{st.session_state.paper_qty:.6f}"))
     
         b1, b2 = st.columns(2)
-        if b1.button("📈 Comprar sim (todo)", use_container_width=True):
+        if b1.button("📈 Comprar sim (todo)", widt='stretch'):
             if st.session_state.paper_qty == 0 and st.session_state.paper_cash > 0:
                 q = (st.session_state.paper_cash / px) * 0.99925
                 st.session_state.paper_qty = q
@@ -462,7 +462,7 @@ def load_data(symbol_: str, timeframe_: str):
                 st.session_state.paper_log.append(f"BUY ${px:.2f} x{q:.6f}")
                 st.rerun()
     
-        if b2.button("📉 Vender sim (todo)", use_container_width=True):
+        if b2.button("📉 Vender sim (todo)", widt='stretch'):
             if st.session_state.paper_qty > 0:
                 st.session_state.paper_cash = st.session_state.paper_qty * px * 0.99925
                 st.session_state.paper_log.append(f"SELL ${px:.2f} -> ${st.session_state.paper_cash:,.2f}")
