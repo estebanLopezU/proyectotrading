@@ -334,26 +334,26 @@ try:
     
     with row1_col1:
         rsi_val = last.get('rsi14', 50)
-        color_cls = "tv-signal-neutral" if rsi_val < 70 else "tv-signal-buy"
+        color_cls = "tv-signal-sell" if rsi_val > 70 else ("tv-signal-buy" if rsi_val < 30 else "tv-signal-neutral")
         st.markdown(tv_gauge(rsi_val, "RSI 14", color_cls), unsafe_allow_html=True)
         st.markdown(tv_metric_card("Precio", fmt_money(price), 
-            f"{_safe_float(tick.get('pct_24h'), 0):+.2%} 24h"))
+            f"{_safe_float(tick.get('pct_24h'), 0):+.2%} 24h"), unsafe_allow_html=True)
     
     with row1_col2:
-        st.markdown(tv_gauge(50, "Win Rate", "tv-signal-buy"), unsafe_allow_html=True)
+        st.markdown(tv_gauge(min(max(_safe_float(last.get("bb_pct"), 0.5) * 100, 0), 100), "BB %B", "tv-signal-sell" if _safe_float(last.get("bb_pct"), 0.5) > 0.8 else ("tv-signal-buy" if _safe_float(last.get("bb_pct"), 0.5) < 0.2 else "tv-signal-neutral")), unsafe_allow_html=True)
         st.markdown(tv_metric_card("Alto 24h", fmt_money(
-            float(tick.get("high_24h") or df["high"].tail(24).max()))))
+            float(tick.get("high_24h") or df["high"].tail(24).max()))), unsafe_allow_html=True)
     
     with row1_col3:
-        st.markdown(tv_gauge(30, "RR", "tv-signal-buy"), unsafe_allow_html=True)
+        _hi24 = float(df["high"].tail(24).max()); _lo24 = float(df["low"].tail(24).min()); _tp = min(max((float(last["close"]) - _lo24) / (_hi24 - _lo24) * 100 if _hi24 > _lo24 else 50.0, 0), 100); st.markdown(tv_gauge(_tp, "Tendencia", "tv-signal-sell" if _tp > 80 else ("tv-signal-buy" if _tp < 20 else "tv-signal-neutral")), unsafe_allow_html=True)
         st.markdown(tv_metric_card("Bajo 24h", fmt_money(
-            float(tick.get("low_24h") or df["low"].tail(24).min()))))
+            float(tick.get("low_24h") or df["low"].tail(24).min()))), unsafe_allow_html=True)
     
     with row1_col4:
-        atr_pct = last.get("atr_pct", float("nan"))
+        _macd = _safe_float(last.get("macd_hist"), 0.0); _mom = min(max(50 + _macd / float(last["close"]) * 10000, 0), 100); st.markdown(tv_gauge(_mom, "Momentum", "tv-signal-buy" if _mom >= 55 else ("tv-signal-sell" if _mom <= 45 else "tv-signal-neutral")), unsafe_allow_html=True); atr_pct = last.get("atr_pct", float("nan"))
         st.markdown(tv_metric_card("ATR %", 
             f"{float(atr_pct):.2f}%" if pd.notna(atr_pct) else "-",
-                        f"Vol: {df['volume'].iloc[-1]:,.0f}"))
+                        f"Vol: {df['volume'].iloc[-1]:,.0f}"), unsafe_allow_html=True)
 
     estado = "🟢 LIVE" if not stale else "🟡 STALE (cache)"
     st.info(f"📡 Estado: {estado} | Fuente: {source} | Latencia: {latency_ms:.0f}ms | Velas: {len(df)}")
@@ -447,11 +447,11 @@ try:
     
     paper_col1, paper_col2, paper_col3 = st.columns(3)
     with paper_col1:
-        st.markdown(tv_metric_card("Patrimonio", f"${eq:,.2f}", "Estado: ACTIVO"))
+        st.markdown(tv_metric_card("Patrimonio", f"${eq:,.2f}", "Estado: ACTIVO"), unsafe_allow_html=True)
     with paper_col2:
-        st.markdown(tv_metric_card("Efectivo", f"${st.session_state.paper_cash:,.2f}"))
+        st.markdown(tv_metric_card("Efectivo", f"${st.session_state.paper_cash:,.2f}"), unsafe_allow_html=True)
     with paper_col3:
-        st.markdown(tv_metric_card("Posición Sim.", f"{st.session_state.paper_qty:.6f}"))
+        st.markdown(tv_metric_card("Posición Sim.", f"{st.session_state.paper_qty:.6f}"), unsafe_allow_html=True)
     
     b1, b2 = st.columns(2)
     if b1.button("📈 Comprar sim (todo)", use_container_width=True):
