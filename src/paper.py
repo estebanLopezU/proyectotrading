@@ -99,7 +99,6 @@ class PaperAccount:
 
     def stats(self) -> dict:
         """Calcula estadisticas basicas de trades cerrados."""
-        import pandas as pd
         df = self.get_trades_df()
         if df.empty:
             return {"n": 0, "win_rate": 0, "profit_factor": 0, "total_pnl": 0.0, "avg_rr": 0}

@@ -1,6 +1,6 @@
 """Fuente unica de verdad del prototipo. Nada hardcodeado en otros modulos."""
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 

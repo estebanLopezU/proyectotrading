@@ -9,8 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import argparse
+
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+
 from src.features import make_dataset
 from src.indicators import add_indicators
 from src.ingest import get_ohlcv

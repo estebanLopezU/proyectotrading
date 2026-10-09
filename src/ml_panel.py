@@ -62,12 +62,14 @@ def ml_signal(df, symbol: str, timeframe: str = "15m", horizon: int = 6,
 
 if __name__ == "__main__":
     import json
-    from src.ingest_ext import fetch_ohlcv_paginated
-    from src.indicators import add_indicators
-    from src.features_v2 import add_features_v2
 
-    raw = fetch_ohlcv_paginated("BTC/USDT", "15m", total=1000)
-    raw["is_closed"] = True
-    df = add_features_v2(add_indicators(raw))
+    from src.features import make_dataset
+    from src.indicators import add_indicators
+    from src.ingest import get_ohlcv
+
+    res = get_ohlcv("BTC/USDT", "15m", 1000)
+    df = add_indicators(res.df)
+    X, y, cols, full = make_dataset(df, 6)
+    from src.scorer import score_signal
     res = score_signal(df, "BTC/USDT", "15m", horizon=6)
     print(json.dumps(res, default=str, indent=2))

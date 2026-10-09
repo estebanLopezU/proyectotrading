@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import argparse
+
 import joblib
+
 from src.features import latest_features
 from src.indicators import add_indicators, latest_signal
 from src.ingest import get_ohlcv

@@ -5,15 +5,13 @@ Prioriza los bundles "signal_*" (regla validada). Solo emite COMPRAR/VENDER
 cuando la regla quedo validada con Wilson LB >= 80% y las condiciones actuales
 la cumplen. Siempre devuelve la probabilidad direccional.
 """
-import math
 import glob
-import os
+import math
 import sys
 from pathlib import Path
 
 import joblib
 import numpy as np
-import pandas as pd
 
 
 def _safe_float(x, default: float = 0.0) -> float:
@@ -26,10 +24,9 @@ def _safe_float(x, default: float = 0.0) -> float:
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.ingest import get_ohlcv
-from src.indicators import add_indicators
-from src.features_v2 import add_features_v2
 from src.features import latest_features
+from src.features_v2 import add_features_v2
+from src.ingest import get_ohlcv
 
 
 def wilson_lb(p: float, n: int, z: float = 1.96) -> float:

@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
+from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,11 +18,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from config.settings import SETTINGS
+from src.alerts import send_telegram
 from src.indicators import add_indicators, latest_signal
 from src.ingest import fetch_ticker_24h, get_ohlcv
-from src.utils import fmt_money, setup_logger
-from src.alerts import send_telegram
 from src.ml_panel import has_trained_model, ml_signal
+from src.utils import fmt_money, setup_logger
 
 setup_logger()
 st.set_page_config(
@@ -36,45 +36,83 @@ st.set_page_config(
 # =============================================
 st.markdown("""
 <style>
+    /* ---- Header glassmorphism ---- */
     .app-header {
-        background: linear-gradient(120deg, #141b28 0%, #0e1520 55%, #101a2e 100%);
-        border: 1px solid #223046;
-        border-radius: 16px;
-        padding: 22px 28px;
-        margin-bottom: 20px;
+        position: relative;
+        background: linear-gradient(120deg, rgba(30,41,59,.72) 0%, rgba(15,23,42,.88) 60%, rgba(30,58,95,.55) 100%);
+        border: 1px solid rgba(148,163,184,.18);
+        border-radius: 18px;
+        padding: 24px 30px;
+        margin-bottom: 22px;
         display: flex; align-items: center; justify-content: space-between;
         flex-wrap: wrap; gap: 14px;
+        box-shadow: 0 20px 50px rgba(2,6,23,.45);
+        overflow: hidden;
     }
-    .app-header .title { font-size: 1.55rem; font-weight: 800; color: #f2f6fc; letter-spacing: -.03em; }
-    .app-header .title .sep { color: #4d8dff; }
-    .app-header .meta { color: #94a1b5; font-size: .85rem; margin-top: 4px; }
+    .app-header::before {
+        content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+        background: linear-gradient(90deg, #60A5FA, #34D399 45%, transparent 90%);
+        opacity: .85;
+    }
+    .app-header .title { font-size: 1.55rem; font-weight: 800; color: #F8FAFC; letter-spacing: -.03em; }
+    .app-header .title .sep { color: #60A5FA; }
+    .app-header .meta { color: #94A3B8; font-size: .85rem; margin-top: 4px; }
     .app-header .price-box { text-align: right; }
-    .app-header .price { font-size: 1.7rem; font-weight: 800; letter-spacing: -.03em; }
+    .app-header .price { font-size: 1.75rem; font-weight: 800; letter-spacing: -.03em;
+                         font-variant-numeric: tabular-nums; }
+    /* ---- Status pill ---- */
     .status-pill {
         display: inline-flex; align-items: center; gap: 6px;
         padding: 3px 12px; border-radius: 999px; font-size: .72rem; font-weight: 700;
+        border: 1px solid transparent;
     }
-    .status-live { background: #0b3d20; color: #38d996; }
-    .status-stale { background: #4a3410; color: #f0b45a; }
+    .status-live { background: rgba(52,211,153,.12); color: #34D399; border-color: rgba(52,211,153,.35); }
+    .status-stale { background: rgba(251,191,36,.12); color: #FBBF24; border-color: rgba(251,191,36,.35); }
     .status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
-    .status-live .status-dot { background: #38d996; animation: blink 2s infinite; }
-    .status-stale .status-dot { background: #f0b45a; }
+    .status-live .status-dot { background: #34D399; animation: blink 2s infinite; }
+    .status-stale .status-dot { background: #FBBF24; }
     @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+    /* ---- Signal banners ---- */
     .signal-banner {
-        padding: 14px; border-radius: 12px; text-align: center;
+        padding: 14px; border-radius: 14px; text-align: center;
         font-size: 1.15rem; font-weight: 800; letter-spacing: .02em;
+        transition: transform .15s ease;
     }
-    .banner-buy { background: linear-gradient(135deg, #0b3d20, #0e5c31); color: #d7ffe8; border: 1px solid #1d7a44; }
-    .banner-sell { background: linear-gradient(135deg, #4a0b16, #6e1122); color: #ffdbe2; border: 1px solid #a12340; }
-    .banner-none { background: #1a2230; color: #98a5b8; border: 1px solid #2a3648; }
+    .banner-buy { background: linear-gradient(135deg, rgba(52,211,153,.16), rgba(16,185,129,.28));
+                  color: #A7F3D0; border: 1px solid rgba(52,211,153,.4);
+                  box-shadow: 0 8px 28px rgba(52,211,153,.12); }
+    .banner-sell { background: linear-gradient(135deg, rgba(248,113,113,.16), rgba(239,68,68,.28));
+                   color: #FECDD3; border: 1px solid rgba(248,113,113,.4);
+                   box-shadow: 0 8px 28px rgba(248,113,113,.12); }
+    .banner-none { background: rgba(30,41,59,.65); color: #94A3B8; border: 1px solid #334155; }
+    /* ---- Tarjetas (metrics nativos con border=True) ---- */
+    [data-testid="stMetric"] {
+        border-radius: 14px !important;
+        transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+    }
+    [data-testid="stMetric"]:hover {
+        border-color: rgba(96,165,250,.45) !important;
+        transform: translateY(-2px);
+        box-shadow: 0 12px 32px rgba(2,6,23,.4);
+    }
+    /* ---- Contenedor del gráfico ---- */
     [data-testid="stPlotlyChart"] {
-        border: 1px solid #223046; border-radius: 14px;
-        background: #0e1520; padding: 6px;
+        border: 1px solid #334155; border-radius: 16px;
+        background: rgba(15,23,42,.6); padding: 8px;
+        transition: border-color .2s ease;
     }
+    [data-testid="stPlotlyChart"]:hover { border-color: rgba(96,165,250,.4); }
+    /* ---- Chips del log de trades ---- */
     .trade-log {
-        padding: 8px 12px; background: #141b28; border: 1px solid #223046;
-        border-radius: 8px; margin: 4px 0; font-size: .82rem; color: #c7d1e0;
+        padding: 8px 12px; background: rgba(30,41,59,.6); border: 1px solid #334155;
+        border-radius: 10px; margin: 4px 0; font-size: .82rem; color: #CBD5E1;
+        font-variant-numeric: tabular-nums;
     }
+    /* ---- Scrollbar ---- */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0B1120; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -84,8 +122,8 @@ st.markdown("""
 with st.sidebar:
     st.subheader(":material/tune: Controles")
 
-    symbol = st.text_input("Símbolo (ccxt)", value=SETTINGS.symbol)
-    timeframe = st.selectbox("Temporalidad", list(SETTINGS.timeframes), index=3)
+    symbol = st.text_input("Símbolo (ccxt)", value=SETTINGS.symbol) or SETTINGS.symbol
+    timeframe = st.selectbox("Temporalidad", list(SETTINGS.timeframes), index=3) or "1h"
     auto_refresh = st.toggle("Auto-refresh", value=True)
     refresh = st.select_slider(
         "Intervalo (s)", options=[5, 15, 30, 60], value=15, disabled=not auto_refresh
@@ -140,6 +178,7 @@ def load_data(symbol_: str, timeframe_: str):
 try:
     with st.spinner("Conectando a Binance..."):
         df, stale, source, latency_ms, tick = load_data(symbol, timeframe)
+        tick = tick or {}
 
     if df is None or df.empty:
         st.warning("Sin velas disponibles. Verifica la conexión y el símbolo.")
@@ -160,7 +199,7 @@ try:
     # =============================================
     # Header
     # =============================================
-    chg_color = "#38d996" if change_24h >= 0 else "#ff5c6c"
+    chg_color = "#34D399" if change_24h >= 0 else "#F87171"
     st.markdown(f"""
     <div class="app-header">
         <div>
@@ -332,16 +371,16 @@ try:
         x=plot_df["timestamp"],
         open=plot_df["open"], high=plot_df["high"],
         low=plot_df["low"], close=plot_df["close"],
-        increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
+        increasing_line_color="#34D399", decreasing_line_color="#F87171",
         name=symbol,
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=plot_df["timestamp"], y=plot_df["sma20"],
-        line=dict(color="#4d8dff", width=1.4), name="SMA 20",
+        line=dict(color="#60A5FA", width=1.4), name="SMA 20",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=plot_df["timestamp"], y=plot_df["sma50"],
-        line=dict(color="#ffab00", width=1.4), name="SMA 50",
+        line=dict(color="#FBBF24", width=1.4), name="SMA 50",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=plot_df["timestamp"], y=plot_df["bb_low"],
@@ -349,13 +388,13 @@ try:
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=plot_df["timestamp"], y=plot_df["bb_high"],
-        line=dict(width=0), fill="tonexty", fillcolor="rgba(77,141,255,.08)",
+        line=dict(width=0), fill="tonexty", fillcolor="rgba(96,165,250,.09)",
         hoverinfo="skip", name="Bollinger",
     ), row=1, col=1)
     fig.add_trace(go.Bar(
         x=plot_df["timestamp"], y=plot_df["volume"],
-        marker_color=["#26a69a" if c >= o else "#ef5350"
-                      for c, o in zip(plot_df["close"], plot_df["open"])],
+        marker_color=["#34D399" if c >= o else "#F87171"
+                      for c, o in zip(plot_df["close"], plot_df["open"], strict=True)],
         name="Volumen",
     ), row=2, col=1)
 
@@ -363,14 +402,14 @@ try:
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#c7d1e0", family="Inter, sans-serif"),
+        font=dict(color="#CBD5E1", family="Inter, sans-serif"),
         margin=dict(l=16, r=16, t=10, b=16),
         height=540,
         xaxis_rangeslider_visible=False,
         legend=dict(orientation="h", y=1.06, x=0),
         hovermode="x unified",
     )
-    fig.update_yaxes(showgrid=True, gridcolor="#1c2636", zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor="#1E293B", zeroline=False)
     st.plotly_chart(fig, width="stretch")
 
     # =============================================

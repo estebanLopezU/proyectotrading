@@ -1,8 +1,7 @@
 """Utilidades: logs, formato moneda, fechas UTC -> display."""
+import math
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-
-import math
 
 from loguru import logger
 

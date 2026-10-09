@@ -3,11 +3,10 @@ Todo sin look-ahead: solo usa informacion hasta la vela actual.
 """
 from __future__ import annotations
 
-import math
 import numpy as np
 import pandas as pd
 
-from src.indicators import _sma, _ema, _rsi
+from src.indicators import _ema, _rsi, _sma
 
 
 def _stoch_k(high: pd.Series, low: pd.Series, close: pd.Series, w: int = 14) -> pd.Series:

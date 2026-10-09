@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from fastapi import FastAPI, Query
+
 from src.indicators import add_indicators
 from src.ingest import fetch_ticker_24h, get_ohlcv
 from src.ml_panel import ml_signal
