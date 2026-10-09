@@ -1,17 +1,17 @@
-"""Dashboard Fase 1-4 - Trading Prototype en vivo con Estilo TradingView.
+"""Dashboard Fase 1-4 - Trading Prototype en vivo.
 Framework: Streamlit + Plotly. Datos: ccxt Binance.
 Correr: streamlit run app/dashboard.py
 """
 from __future__ import annotations
 
-import math
-import os
 import sys
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -20,514 +20,403 @@ if str(ROOT) not in sys.path:
 from config.settings import SETTINGS
 from src.indicators import add_indicators, latest_signal
 from src.ingest import fetch_ticker_24h, get_ohlcv
-from src.utils import _safe_float, fmt_money, fmt_pct, setup_logger
+from src.utils import fmt_money, setup_logger
 from src.alerts import send_telegram
-from src.ml_panel import ml_signal
+from src.ml_panel import has_trained_model, ml_signal
 
 setup_logger()
-st.set_page_config(page_title="Trading Dashboard", layout="wide", page_icon="📈")
+st.set_page_config(
+    page_title="Trading Dashboard",
+    layout="wide",
+    page_icon=":material/candlestick_chart:",
+)
 
 # =============================================
-# TradingView-style dark theme CSS
+# CSS - tema oscuro financiero (único bloque)
 # =============================================
-def inject_tradingview_css():
-    """CSS completo estilo TradingView - Tema oscuro profesional."""
-    st.markdown("""
-    <style>
-    :root {
-        --bg-primary: #131722;
-        --bg-secondary: #1e222d;
-        --bg-tertiary: #2a2e39;
-        --text-primary: #e1e6ee;
-        --text-secondary: #b2b5bd;
-        --border-color: #2a2e39;
-        --accent-green: #00c853;
-        --accent-red: #ff1744;
-        --accent-yellow: #ffab00;
-        --accent-blue: #2962ff;
+st.markdown("""
+<style>
+    .app-header {
+        background: linear-gradient(120deg, #141b28 0%, #0e1520 55%, #101a2e 100%);
+        border: 1px solid #223046;
+        border-radius: 16px;
+        padding: 22px 28px;
+        margin-bottom: 20px;
+        display: flex; align-items: center; justify-content: space-between;
+        flex-wrap: wrap; gap: 14px;
     }
-    
-    .stApp {
-        background-color: var(--bg-primary);
-        color: var(--text-primary);
-        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    .app-header .title { font-size: 1.55rem; font-weight: 800; color: #f2f6fc; letter-spacing: -.03em; }
+    .app-header .title .sep { color: #4d8dff; }
+    .app-header .meta { color: #94a1b5; font-size: .85rem; margin-top: 4px; }
+    .app-header .price-box { text-align: right; }
+    .app-header .price { font-size: 1.7rem; font-weight: 800; letter-spacing: -.03em; }
+    .status-pill {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 3px 12px; border-radius: 999px; font-size: .72rem; font-weight: 700;
     }
-    
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-track { background: var(--bg-primary); }
-    ::-webkit-scrollbar-thumb {
-        background: var(--bg-tertiary);
-        border-radius: 4px;
+    .status-live { background: #0b3d20; color: #38d996; }
+    .status-stale { background: #4a3410; color: #f0b45a; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+    .status-live .status-dot { background: #38d996; animation: blink 2s infinite; }
+    .status-stale .status-dot { background: #f0b45a; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+    .signal-banner {
+        padding: 14px; border-radius: 12px; text-align: center;
+        font-size: 1.15rem; font-weight: 800; letter-spacing: .02em;
     }
-    ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
-    
-    .tv-header {
-        background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
-        padding: 25px;
-        border-radius: 12px;
-        border: 1px solid var(--border-color);
-        margin-bottom: 25px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-        position: relative;
-        overflow: hidden;
+    .banner-buy { background: linear-gradient(135deg, #0b3d20, #0e5c31); color: #d7ffe8; border: 1px solid #1d7a44; }
+    .banner-sell { background: linear-gradient(135deg, #4a0b16, #6e1122); color: #ffdbe2; border: 1px solid #a12340; }
+    .banner-none { background: #1a2230; color: #98a5b8; border: 1px solid #2a3648; }
+    [data-testid="stPlotlyChart"] {
+        border: 1px solid #223046; border-radius: 14px;
+        background: #0e1520; padding: 6px;
     }
-    
-    .tv-header::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0;
-        height: 3px;
-        background: linear-gradient(90deg, var(--accent-green), var(--accent-yellow), var(--accent-red));
-        animation: pulse 3s infinite;
+    .trade-log {
+        padding: 8px 12px; background: #141b28; border: 1px solid #223046;
+        border-radius: 8px; margin: 4px 0; font-size: .82rem; color: #c7d1e0;
     }
-    
-    @keyframes pulse {
-        0%, 100% { opacity: 0.6; }
-        50% { opacity: 1; }
-    }
-    
-    .tv-title { font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
-    .tv-subtitle { font-size: 14px; color: var(--text-secondary); }
-    
-    .tv-metric-card {
-        background: var(--bg-secondary);
-        border-radius: 10px;
-        padding: 20px;
-        margin: 8px 0;
-        border: 1px solid var(--border-color);
-        transition: all 0.3s ease;
-    }
-    
-    .tv-metric-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 6px 20px rgba(41, 98, 255, 0.2);
-        border-color: var(--accent-blue);
-    }
-    
-    .tv-metric-title {
-        font-size: 12px;
-        color: var(--text-secondary);
-        margin-bottom: 10px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        font-weight: 600;
-    }
-    
-    .tv-metric-value {
-        font-size: 24px;
-        font-weight: 700;
-        color: var(--text-primary);
-        margin-bottom: 5px;
-    }
-    
-    .tv-metric-sub {
-        font-size: 12px;
-        color: var(--text-secondary);
-    }
-    
-    .tv-gauge-container { display: flex; justify-content: center; align-items: center; padding: 25px 15px; }
-    .tv-gauge-svg { transform: rotate(-90deg); width: 130px; height: 130px; }
-    .tv-gauge-circle { fill: none; stroke-width: 12; stroke-linecap: round; }
-    .tv-gauge-bg { stroke: var(--bg-tertiary); }
-    .tv-gauge-value { fill: var(--text-primary); font-size: 22px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
-    .tv-gauge-label { fill: var(--text-secondary); font-size: 11px; text-anchor: middle; dominant-baseline: middle; }
-    
-    @keyframes gauge-fill { from { stroke-dasharray: 0 440; } }
-    
-    .tv-signal-buy { color: var(--accent-green); font-weight: 600; }
-    .tv-signal-sell { color: var(--accent-red); font-weight: 600; }
-    .tv-signal-neutral { color: var(--accent-yellow); font-weight: 600; }
-    
-    .tv-status-live { color: var(--accent-green); font-weight: 600; display: flex; align-items: center; gap: 6px; }
-    .tv-status-live::before {
-        content: '';
-        width: 8px; height: 8px;
-        border-radius: 50%;
-        background: var(--accent-green);
-        animation: blink 2s infinite;
-    }
-    
-    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-    
-    .tv-button {
-        background: var(--accent-blue); color: white; border: none; border-radius: 8px;
-        padding: 12px 24px; font-weight: 600; font-size: 14px; cursor: pointer;
-        transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 8px;
-    }
-    
-    .tv-button:hover {
-        background: #1a56db; transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(41, 98, 255, 0.3);
-    }
-    
-    .tv-control-panel {
-        background: var(--bg-secondary); border-radius: 10px;
-        border: 1px solid var(--border-color); padding: 20px; margin: 15px 0;
-    }
-    
-    .tv-control-title {
-        font-size: 16px; font-weight: 600;
-        color: var(--text-primary); margin-bottom: 15px;
-    }
-    
-        @media (max-width: 768px) { .tv-title { font-size: 24px; } }
-    </style>
-    """, unsafe_allow_html=True)
+</style>
+""", unsafe_allow_html=True)
 
 # =============================================
-# Utility functions
-# =============================================
-def _safe_float(x, default: float = 0.0) -> float:
-    """Convert to float, returning default if None or NaN."""
-    try:
-        fx = float(x)
-    except (TypeError, ValueError):
-        return default
-    return fx if not math.isnan(fx) else default
-
-# =============================================
-# TradingView-style components
-# =============================================
-def tv_gauge(value: float, label: str, color_class: str = "tv-signal-buy"):
-    """Crear un medidor circular estilo TradingView."""
-    percentage = min(max(value, 0), 100)
-    radius = 45
-    circumference = 2 * 3.14159 * radius
-    color_map = {
-        "tv-signal-buy": "#00c853",
-        "tv-signal-sell": "#ff1744",
-        "tv-signal-neutral": "#ffab00"
-    }
-    color_val = color_map.get(color_class, "#00c853")
-    
-    return f"""
-    <div class="tv-gauge-container">
-        <svg class="tv-gauge-svg" viewBox="0 0 130 130">
-            <circle class="tv-gauge-circle tv-gauge-bg" cx="65" cy="65" r="{radius}" />
-            <circle class="tv-gauge-circle" 
-                    cx="65" cy="65" r="{radius}"
-                    stroke="{color_val}"
-                    stroke-dasharray="{(percentage / 100) * circumference} {circumference}"
-                    stroke-linecap="round"
-                    style="animation: gauge-fill 1s ease-out;" />
-            <text class="tv-gauge-value" x="65" y="62">{value:.0f}%</text>
-            <text class="tv-gauge-label" x="65" y="80">{label}</text>
-        </svg>
-    </div>
-    """
-
-def tv_metric_card(title: str, value: str, sub: str = "", delta: str = None):
-    """Crear una tarjeta de métrica estilo TradingView."""
-    delta_html = ""
-    if delta:
-        delta_color = "#00c853" if delta.startswith("+") else "#ff1744"
-        delta_html = f'<div style="color: {delta_color}; font-size: 12px; font-weight: 600;">{delta}</div>'
-    
-    return f"""
-    <div class="tv-metric-card">
-        <div class="tv-metric-title">{title}</div>
-        <div class="tv-metric-value">{value}</div>
-        <div class="tv-metric-sub">{sub} {delta_html}</div>
-    </div>
-    """
-
-def tv_signal_indicator(label: str, probability: float, color_class: str):
-    """Crear un indicador de señal estilo TradingView."""
-    icon_map = {
-        "COMPRAR": "📈",
-        "VENDER": "📉",
-        "SIN_SENAL": "➡️",
-        "SIN MODELO": "⚠️",
-        "ERROR": "⚠️"
-    }
-    
-    return f"""
-    <div style="display: flex; align-items: center; gap: 10px; padding: 10px; 
-        background: var(--bg-tertiary); border-radius: 8px; margin: 5px 0;">
-        <span style="font-size: 20px;">{icon_map.get(label, '📊')}</span>
-        <span class="{color_class}">{label}</span>
-        <span style="color: var(--text-secondary); font-size: 12px;">({probability:.1%})</span>
-    </div>
-    """
-
-# Initialize CSS
-inject_tradingview_css()
-
-# =============================================
-# Sidebar - TradingView Style
+# Sidebar
 # =============================================
 with st.sidebar:
-    st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
-    st.markdown('<div class="tv-control-title" style="font-size:20px;">Control Panel</div>', unsafe_allow_html=True)
-    
+    st.subheader(":material/tune: Controles")
+
     symbol = st.text_input("Símbolo (ccxt)", value=SETTINGS.symbol)
     timeframe = st.selectbox("Temporalidad", list(SETTINGS.timeframes), index=3)
-    refresh = st.select_slider("Auto-refresh (s)", options=[5, 15, 30, 60], value=15)
-    
-    ml_source = st.radio("Fuente de predicción ML", ["Local", "API (/predict)"])
+    auto_refresh = st.toggle("Auto-refresh", value=True)
+    refresh = st.select_slider(
+        "Intervalo (s)", options=[5, 15, 30, 60], value=15, disabled=not auto_refresh
+    )
+
+    ml_source = st.segmented_control(
+        "Fuente de predicción ML", ["Local", "API"], default="Local"
+    )
     api_base = ""
-    if ml_source == "API (/predict)":
+    if ml_source == "API":
         api_base = st.text_input("URL API", value="http://127.0.0.1:8000")
-    
-    if st.button("🔄 Actualizar ahora"):
+
+    if st.button(":material/refresh: Actualizar ahora", width="stretch"):
         st.cache_data.clear()
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Panel de resumen del sistema
-    st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
-    st.markdown('<div class="tv-control-title">📋 Estado del Sistema</div>', unsafe_allow_html=True)
-    
-    st.markdown("<div style='display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-color);'><span style='color: var(--text-secondary);'>Modelo ML:</span><span style='color: var(--accent-green);'>✅ Entrenado</span></div>", unsafe_allow_html=True)
-    st.markdown("<div style='display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-color);'><span style='color: var(--text-secondary);'>Precisión Mínima:</span><span style='color: var(--text-primary);'>80%</span></div>", unsafe_allow_html=True)
-    st.markdown("<div style='display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-color);'><span style='color: var(--text-secondary);'>Validación:</span><span style='color: var(--accent-green);'>✅ Out-of-sample</span></div>", unsafe_allow_html=True)
-    st.markdown("<div style='display: flex; justify-content: space-between; padding: 8px 0;'><span style='color: var(--text-secondary);'>Datos:</span><span style='color: var(--accent-blue);'>📡 Binance LIVE</span></div>", unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.toast("Caché limpiada")
+
+    st.subheader(":material/monitor_heart: Estado del sistema")
+    model_ok = has_trained_model(symbol)
+    if model_ok:
+        st.markdown(
+            ":green-badge[Modelo ML entrenado] :green-badge[Precisión mín. 80%] "
+            ":blue-badge[Binance LIVE]"
+        )
+    else:
+        st.markdown(
+            ":red-badge[Modelo ML no entrenado] :green-badge[Precisión mín. 80%] "
+            ":blue-badge[Binance LIVE]"
+        )
+        st.caption("Ejecuta `python scripts/train_signal.py` para entrenar un modelo.")
+
+    st.caption("Prototipo educativo · no ejecuta órdenes reales")
+
+if auto_refresh:
+    st_autorefresh(interval=refresh * 1000, key="dashboard_autorefresh")
 
 # =============================================
-# Header Principal TradingView
-# =============================================
-st.markdown('<div class="tv-header">', unsafe_allow_html=True)
-st.markdown(f"""
-<div class="tv-title">📈 Trading Prototype - {symbol} {timeframe} en VIVO</div>
-<div class="tv-subtitle">🚀 Fase 1-4 • ML con Validación Honesta • Paper-Trading Simulado</div>
-""", unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
-
-# =============================================
-# Data Loading
+# Carga de datos
 # =============================================
 @st.cache_data(ttl=10, show_spinner=False)
 def load_data(symbol_: str, timeframe_: str):
-    """Cargar datos con cache TradingView."""
     try:
         res = get_ohlcv(symbol_, timeframe_)
         df = add_indicators(res.df)
         tick = fetch_ticker_24h(symbol_)
         return df, res.stale, res.source, res.latency_ms, tick
-    except Exception as e:
+    except Exception:  # noqa: BLE001
         return None, True, "ERROR", 0, None
 
 # =============================================
-# Main Dashboard Content
+# Contenido principal
 # =============================================
 try:
-    with st.spinner("🔄 Conectando a Binance..."):
+    with st.spinner("Conectando a Binance..."):
         df, stale, source, latency_ms, tick = load_data(symbol, timeframe)
-    
+
     if df is None or df.empty:
-        st.warning("⚠️ Sin velas disponibles. Verifique conexión y símbolo.")
+        st.warning("Sin velas disponibles. Verifica la conexión y el símbolo.")
         st.stop()
-    
+
     last = df.iloc[-1]
     price = float(tick.get("last") or last["close"])
     sig = latest_signal(df)
-    ml_pred = ml_signal(df, symbol, timeframe)
-    
+    ml_pred = ml_signal(df, symbol, timeframe, source="local" if ml_source != "API" else "api",
+                        api_base=api_base)
+
+    change_24h = float(tick.get("pct_24h") or 0.0)
+    high_24h = float(tick.get("high_24h") or df["high"].tail(24).max())
+    low_24h = float(tick.get("low_24h") or df["low"].tail(24).min())
+    atr_pct = last.get("atr_pct", float("nan"))
+    estado = "EN VIVO" if not stale else "DATOS EN CACHÉ"
+
     # =============================================
-    # Métricas Principales con Gauges TradingView
+    # Header
     # =============================================
-    st.subheader("📊 Métricas Principales")
-    
-    row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
-    
-    with row1_col1:
-        rsi_val = last.get('rsi14', 50)
-        color_cls = "tv-signal-sell" if rsi_val > 70 else ("tv-signal-buy" if rsi_val < 30 else "tv-signal-neutral")
-        st.markdown(tv_gauge(rsi_val, "RSI 14", color_cls), unsafe_allow_html=True)
-        st.markdown(tv_metric_card("Precio", fmt_money(price), 
-            f"{_safe_float(tick.get('pct_24h'), 0):+.2%} 24h"), unsafe_allow_html=True)
-    
-    with row1_col2:
-        st.markdown(tv_gauge(min(max(_safe_float(last.get("bb_pct"), 0.5) * 100, 0), 100), "BB %B", "tv-signal-sell" if _safe_float(last.get("bb_pct"), 0.5) > 0.8 else ("tv-signal-buy" if _safe_float(last.get("bb_pct"), 0.5) < 0.2 else "tv-signal-neutral")), unsafe_allow_html=True)
-        st.markdown(tv_metric_card("Alto 24h", fmt_money(
-            float(tick.get("high_24h") or df["high"].tail(24).max()))), unsafe_allow_html=True)
-    
-    with row1_col3:
-        _hi24 = float(df["high"].tail(24).max()); _lo24 = float(df["low"].tail(24).min()); _tp = min(max((float(last["close"]) - _lo24) / (_hi24 - _lo24) * 100 if _hi24 > _lo24 else 50.0, 0), 100); st.markdown(tv_gauge(_tp, "Tendencia", "tv-signal-sell" if _tp > 80 else ("tv-signal-buy" if _tp < 20 else "tv-signal-neutral")), unsafe_allow_html=True)
-        st.markdown(tv_metric_card("Bajo 24h", fmt_money(
-            float(tick.get("low_24h") or df["low"].tail(24).min()))), unsafe_allow_html=True)
-    
-    with row1_col4:
-        _macd = _safe_float(last.get("macd_hist"), 0.0); _mom = min(max(50 + _macd / float(last["close"]) * 10000, 0), 100); st.markdown(tv_gauge(_mom, "Momentum", "tv-signal-buy" if _mom >= 55 else ("tv-signal-sell" if _mom <= 45 else "tv-signal-neutral")), unsafe_allow_html=True); atr_pct = last.get("atr_pct", float("nan"))
-        st.markdown(tv_metric_card("ATR %", 
-            f"{float(atr_pct):.2f}%" if pd.notna(atr_pct) else "-",
-                        f"Vol: {df['volume'].iloc[-1]:,.0f}"), unsafe_allow_html=True)
+    chg_color = "#38d996" if change_24h >= 0 else "#ff5c6c"
+    st.markdown(f"""
+    <div class="app-header">
+        <div>
+            <div class="title">Mercado <span class="sep">/</span> {symbol}</div>
+            <div class="meta">Terminal de análisis · {timeframe} · Señales técnicas, modelo ML y simulación</div>
+            <div class="meta" style="margin-top:8px">
+                <span class="status-pill {'status-live' if not stale else 'status-stale'}">
+                    <span class="status-dot"></span>{estado}
+                </span>
+                <span style="margin-left:6px">Fuente: {source} · {latency_ms:.0f} ms · {len(df)} velas</span>
+            </div>
+        </div>
+        <div class="price-box">
+            <div class="price" style="color:{chg_color}">{fmt_money(price)}</div>
+            <div style="color:{chg_color};font-weight:700">{change_24h:+.2f}% · 24 h</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    estado = "🟢 LIVE" if not stale else "🟡 STALE (cache)"
-    st.info(f"📡 Estado: {estado} | Fuente: {source} | Latencia: {latency_ms:.0f}ms | Velas: {len(df)}")
-    
-    st.subheader("🎯 Señales Técnicas y ML")
-    signal_col1, signal_col2 = st.columns(2)
-    
-    with signal_col1:
-        st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
-        st.markdown('<div class="tv-control-title">📋 Señal Regla</div>', unsafe_allow_html=True)
-        st.markdown(f"**Label:** {sig['label']} | **Score:** {sig['score']}")
-        st.markdown(f"**Razones:** {' | '.join(sig['reasons']) if sig['reasons'] else 'Ninguna'}")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with signal_col2:
-        st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
-        st.markdown('<div class="tv-control-title">Señal de Apuesta (ML validado)</div>', unsafe_allow_html=True)
+    # =============================================
+    # KPIs con sparklines
+    # =============================================
+    spark = df["close"].tail(48).tolist()
+    vol_series = df["volume"].tail(48).tolist()
+    with st.container(horizontal=True):
+        st.metric("Precio", fmt_money(price), f"{change_24h:+.2%}",
+                  border=True, chart_data=spark, chart_type="line")
+        st.metric("Máximo 24 h", fmt_money(high_24h), border=True,
+                  chart_data=df["high"].tail(24).tolist())
+        st.metric("Mínimo 24 h", fmt_money(low_24h), border=True,
+                  chart_data=df["low"].tail(24).tolist())
+        st.metric("Volatilidad ATR",
+                  f"{float(atr_pct):.2f}%" if pd.notna(atr_pct) else "—",
+                  f"Vol. {df['volume'].iloc[-1]:,.0f}", border=True,
+                  chart_data=vol_series, chart_type="bar")
 
-        if ml_pred.get("ok"):
-            prob_up = ml_pred.get("prob_up", 0.5)
-            prob_down = ml_pred.get("prob_down", 0.5)
-            label = ml_pred.get("label", "SIN SENAL")
-            fire = bool(ml_pred.get("fire"))
-            prec = ml_pred.get("precision", 0.0)
-            lb = ml_pred.get("wilson_lb", 0.0)
-            n_test = ml_pred.get("n_test", 0)
-            mtf = ml_pred.get("model_timeframe", timeframe)
-            hz = ml_pred.get("horizon_velas", 0)
-            tdesc = ml_pred.get("target_desc", "")
-            min_ret = ml_pred.get("min_ret", 0.0)
+    # =============================================
+    # Indicadores técnicos
+    # =============================================
+    st.subheader("Indicadores técnicos", icon=":material/query_stats:")
+    st.caption("Lectura de la última vela")
 
-            if fire and "COMPRAR" in label:
-                banner = ("<div style='padding:14px;border-radius:10px;"
-                          "background:linear-gradient(135deg,#0b3d20,#00c853);color:#fff;"
-                          "text-align:center;font-size:22px;font-weight:800;'>"
-                          "SEÑAL: COMPRAR (LARGO)</div>")
-            elif fire and "VENDER" in label:
-                banner = ("<div style='padding:14px;border-radius:10px;"
-                          "background:linear-gradient(135deg,#4a0b16,#ff1744);color:#fff;"
-                          "text-align:center;font-size:22px;font-weight:800;'>"
-                          "SEÑAL: VENDER (CORTO)</div>")
+    rsi_val = float(last.get("rsi14", 50) or 50)
+    bb_val = float(last.get("bb_pct", 0.5) or 0.5)
+    _hi24 = float(df["high"].tail(24).max())
+    _lo24 = float(df["low"].tail(24).min())
+    range_pos = (float(last["close"]) - _lo24) / (_hi24 - _lo24) if _hi24 > _lo24 else 0.5
+    macd_hist = float(last.get("macd_hist", 0.0) or 0.0)
+
+    ind_col1, ind_col2, ind_col3, ind_col4 = st.columns(4)
+    with ind_col1:
+        with st.container(border=True):
+            st.metric("RSI 14", f"{rsi_val:.1f}")
+            st.progress(min(max(rsi_val, 0), 100) / 100,
+                        text="Sobreventa < 30 · Sobrecompra > 70")
+            if rsi_val > 70:
+                st.markdown(":red-badge[Sobrecompra]")
+            elif rsi_val < 30:
+                st.markdown(":green-badge[Sobreventa]")
+    with ind_col2:
+        with st.container(border=True):
+            st.metric("Bollinger %B", f"{bb_val:.2f}")
+            st.progress(min(max(bb_val, 0), 1), text="Rango habitual 0 – 1")
+            if bb_val > 0.8:
+                st.markdown(":red-badge[Banda superior]")
+            elif bb_val < 0.2:
+                st.markdown(":green-badge[Banda inferior]")
+    with ind_col3:
+        with st.container(border=True):
+            st.metric("Posición en rango", f"{range_pos:.0%}", "Últimas 24 velas")
+            st.progress(min(max(range_pos, 0), 1))
+    with ind_col4:
+        with st.container(border=True):
+            st.metric("MACD histograma", f"{macd_hist:,.2f}")
+            st.progress(min(max(50 + macd_hist / float(last["close"]) * 10000, 0), 100) / 100)
+            if macd_hist > 0:
+                st.markdown(":green-badge[Momentum alcista]")
             else:
-                banner = ("<div style='padding:12px;border-radius:10px;background:#2a2e39;"
-                          "color:#b2b5bd;text-align:center;font-size:15px;font-weight:700;'>"
-                          "SIN SEÑAL - el edge validado no se cumple ahora</div>")
-            st.markdown(banner, unsafe_allow_html=True)
+                st.markdown(":red-badge[Momentum bajista]")
 
-            st.progress(min(max(prob_up, 0.0), 1.0))
-            st.markdown(
-                f"<p style='text-align:center;font-weight:700;margin:6px 0;'>"
-                f"P(subida &gt; {min_ret:.1%}) = {prob_up:.1%}</p>", unsafe_allow_html=True)
-            st.caption(f"Modelo: {mtf} | horizonte: {hz} velas | sesgo: {ml_pred.get('direction','-')}")
-            if tdesc:
-                st.caption(f"Objetivo del modelo: {tdesc}")
-            st.markdown(
-                f"<div style='font-size:12px;color:#b2b5bd;'>Precision validada: "
-                f"<b style='color:#00c853'>{prec:.1%}</b> | IC95% (Wilson LB): <b>{lb:.1%}</b> "
-                f"| muestras: <b>{n_test}</b></div>", unsafe_allow_html=True)
-            cond = ml_pred.get("conditions", {})
-            if cond:
-                req = cond.get("cond_requerida", "-")
-                cumple = cond.get("cond_cumplida", False)
-                st.caption(f"Condicion requerida: {req} -> {'cumplida' if cumple else 'NO cumplida'}")
-
-            if fire and prec >= 0.80:
-                r = send_telegram(
-                    f"{symbol} {mtf} {label} p={ml_pred.get('proba', 0):.2f} "
-                    f"prec={prec:.0%} LB={lb:.0%}")
-                if r.get("ok"):
-                    st.toast("Alerta Telegram enviada")
-
-            st.markdown("<div style='font-size:11px;color:#8a8f98;margin-top:8px;'>"
-                        "Educativo. Precision historica validada; no garantiza el futuro. "
-                        "Gestiona tu riesgo.</div>", unsafe_allow_html=True)
-        else:
-            st.info(f"ML no disponible: {ml_pred.get('label','Modelo no entrenado')}")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
     # =============================================
-    # Chart - Gráfico de Velas TradingView
+    # Señales
     # =============================================
-    st.subheader("📈 Gráfico de Velas")
+    st.subheader("Señales técnicas y ML", icon=":material/insights:")
+    sig_col1, sig_col2 = st.columns(2)
+
+    with sig_col1:
+        with st.container(border=True):
+            st.markdown("**Señal por regla**")
+            if "COMPRAR" in sig["label"]:
+                st.success(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_up:")
+            elif "VENDER" in sig["label"]:
+                st.error(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_down:")
+            else:
+                st.info(f"{sig['label']} · score {sig['score']:+d}", icon=":material/pause:")
+            for reason in sig["reasons"]:
+                st.markdown(f"- {reason}")
+
+    with sig_col2:
+        with st.container(border=True):
+            st.markdown("**Señal ML validada**")
+            if ml_pred.get("ok"):
+                prob_up = float(ml_pred.get("prob_up") or 0.5)
+                fire = bool(ml_pred.get("fire"))
+                label = ml_pred.get("label", "SIN SEÑAL")
+                prec = float(ml_pred.get("precision") or 0.0)
+                lb = float(ml_pred.get("wilson_lb") or 0.0)
+                n_test = int(ml_pred.get("n_test") or 0)
+                mtf = ml_pred.get("model_timeframe", timeframe)
+                hz = ml_pred.get("horizon_velas", 0)
+                min_ret = float(ml_pred.get("min_ret") or 0.0)
+
+                if fire and "COMPRAR" in label:
+                    st.markdown('<div class="signal-banner banner-buy">SEÑAL: COMPRAR (LARGO)</div>',
+                                unsafe_allow_html=True)
+                elif fire and "VENDER" in label:
+                    st.markdown('<div class="signal-banner banner-sell">SEÑAL: VENDER (CORTO)</div>',
+                                unsafe_allow_html=True)
+                else:
+                    st.markdown('<div class="signal-banner banner-none">SIN SEÑAL · el edge validado no se cumple ahora</div>',
+                                unsafe_allow_html=True)
+
+                st.progress(min(max(prob_up, 0.0), 1.0))
+                st.markdown(
+                    f"**P(subida > {min_ret:.1%}) = {prob_up:.1%}** · "
+                    f"Modelo: {mtf} · horizonte: {hz} velas"
+                )
+                if ml_pred.get("target_desc"):
+                    st.caption(f"Objetivo: {ml_pred['target_desc']}")
+                st.caption(
+                    f"Precisión validada: {prec:.1%} · IC95% Wilson LB: {lb:.1%} · muestras: {n_test}"
+                )
+                cond = ml_pred.get("conditions") or {}
+                if cond:
+                    req = cond.get("cond_requerida", "-")
+                    cumple = cond.get("cond_cumplida", False)
+                    st.caption(f"Condición requerida: {req} → "
+                               f"{'cumplida' if cumple else 'NO cumplida'}")
+
+                # Alerta Telegram una sola vez por vela (evita spam en cada rerun)
+                if fire and prec >= 0.80:
+                    sig_key = f"{symbol}|{mtf}|{label}|{df['timestamp'].iloc[-1]}"
+                    if st.session_state.get("last_alert") != sig_key:
+                        r = send_telegram(
+                            f"{symbol} {mtf} {label} p={ml_pred.get('proba', 0):.2f} "
+                            f"prec={prec:.0%} LB={lb:.0%}"
+                        )
+                        if r.get("ok"):
+                            st.session_state.last_alert = sig_key
+                            st.toast("Alerta Telegram enviada")
+            else:
+                st.info(f"ML no disponible: {ml_pred.get('label', 'Modelo no entrenado')}")
+
+            st.caption(
+                "Educativo · precisión histórica validada, no garantiza el futuro. Gestiona tu riesgo."
+            )
+
+    # =============================================
+    # Gráfico de velas + volumen
+    # =============================================
+    st.subheader("Gráfico de velas", icon=":material/candlestick_chart:")
     plot_df = df.tail(200)
-    
-    fig = go.Figure(data=[go.Candlestick(
-        x=plot_df['timestamp'],
-        open=plot_df['open'],
-        high=plot_df['high'],
-        low=plot_df['low'],
-        close=plot_df['close'],
-        increasing_line_color='#00c853',
-        decreasing_line_color='#ff1744',
-        name=symbol
-    )])
-    
-    fig.update_layout(
-        plot_bgcolor='#1e222d',
-        paper_bgcolor='#1e222d',
-        font=dict(color='#e1e6ee'),
-        xaxis=dict(gridcolor='#2a2e39', zerolinecolor='#2a2e39'),
-        yaxis=dict(gridcolor='#2a2e39', zerolinecolor='#2a2e39'),
-        margin=dict(l=20, r=20, t=40, b=20),
-        height=500,
-        xaxis_rangeslider_visible=False,
+
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        vertical_spacing=0.03, row_heights=[0.75, 0.25],
     )
-    st.plotly_chart(fig, use_container_width=True)
-    
+    fig.add_trace(go.Candlestick(
+        x=plot_df["timestamp"],
+        open=plot_df["open"], high=plot_df["high"],
+        low=plot_df["low"], close=plot_df["close"],
+        increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
+        name=symbol,
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=plot_df["timestamp"], y=plot_df["sma20"],
+        line=dict(color="#4d8dff", width=1.4), name="SMA 20",
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=plot_df["timestamp"], y=plot_df["sma50"],
+        line=dict(color="#ffab00", width=1.4), name="SMA 50",
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=plot_df["timestamp"], y=plot_df["bb_low"],
+        line=dict(width=0), hoverinfo="skip", showlegend=False,
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=plot_df["timestamp"], y=plot_df["bb_high"],
+        line=dict(width=0), fill="tonexty", fillcolor="rgba(77,141,255,.08)",
+        hoverinfo="skip", name="Bollinger",
+    ), row=1, col=1)
+    fig.add_trace(go.Bar(
+        x=plot_df["timestamp"], y=plot_df["volume"],
+        marker_color=["#26a69a" if c >= o else "#ef5350"
+                      for c, o in zip(plot_df["close"], plot_df["open"])],
+        name="Volumen",
+    ), row=2, col=1)
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#c7d1e0", family="Inter, sans-serif"),
+        margin=dict(l=16, r=16, t=10, b=16),
+        height=540,
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", y=1.06, x=0),
+        hovermode="x unified",
+    )
+    fig.update_yaxes(showgrid=True, gridcolor="#1c2636", zeroline=False)
+    st.plotly_chart(fig, width="stretch")
+
     # =============================================
-    # Paper Trading TradingView Style
+    # Paper trading
     # =============================================
-    st.subheader("💼 Paper Trading Simulado ($10,000)")
-    
+    st.subheader("Paper trading simulado ($10,000)", icon=":material/account_balance_wallet:")
+
     if "paper_cash" not in st.session_state:
         st.session_state.paper_cash = 10000.0
         st.session_state.paper_qty = 0.0
         st.session_state.paper_log = []
-    
+
     px = float(last["close"])
     eq = st.session_state.paper_cash + st.session_state.paper_qty * px
-    
-    paper_col1, paper_col2, paper_col3 = st.columns(3)
-    with paper_col1:
-        st.markdown(tv_metric_card("Patrimonio", f"${eq:,.2f}", "Estado: ACTIVO"), unsafe_allow_html=True)
-    with paper_col2:
-        st.markdown(tv_metric_card("Efectivo", f"${st.session_state.paper_cash:,.2f}"), unsafe_allow_html=True)
-    with paper_col3:
-        st.markdown(tv_metric_card("Posición Sim.", f"{st.session_state.paper_qty:.6f}"), unsafe_allow_html=True)
-    
+    pnl_pct = (eq / 10000 - 1) * 100
+
+    with st.container(horizontal=True):
+        st.metric("Patrimonio", f"${eq:,.2f}", f"{pnl_pct:+.2f}%", border=True)
+        st.metric("Efectivo", f"${st.session_state.paper_cash:,.2f}", border=True)
+        st.metric("Posición", f"{st.session_state.paper_qty:.6f}", border=True)
+
     b1, b2 = st.columns(2)
-    if b1.button("📈 Comprar sim (todo)", use_container_width=True):
+    if b1.button(":material/trending_up: Comprar sim (todo)", width="stretch"):
         if st.session_state.paper_qty == 0 and st.session_state.paper_cash > 0:
             q = (st.session_state.paper_cash / px) * 0.99925
             st.session_state.paper_qty = q
             st.session_state.paper_cash = 0.0
-            st.session_state.paper_log.append(f"BUY ${px:.2f} x{q:.6f}")
+            st.session_state.paper_log.append(f"BUY ${px:.2f} × {q:.6f}")
             st.rerun()
-    
-    if b2.button("📉 Vender sim (todo)", use_container_width=True):
+    if b2.button(":material/trending_down: Vender sim (todo)", width="stretch"):
         if st.session_state.paper_qty > 0:
             st.session_state.paper_cash = st.session_state.paper_qty * px * 0.99925
-            st.session_state.paper_log.append(f"SELL ${px:.2f} -> ${st.session_state.paper_cash:,.2f}")
+            st.session_state.paper_log.append(f"SELL ${px:.2f} → ${st.session_state.paper_cash:,.2f}")
             st.session_state.paper_qty = 0.0
             st.rerun()
-    
-    if st.session_state.paper_log:
-        st.markdown('<div class="tv-control-panel">', unsafe_allow_html=True)
-        st.markdown('<div class="tv-control-title">📋 Registro de Operaciones Recientes</div>', unsafe_allow_html=True)
-        for log_entry in st.session_state.paper_log[-5:]:
-            st.markdown(f"<div style='padding:8px;background:var(--bg-tertiary);border-radius:6px;margin:8px 0;font-size:13px;'>{log_entry}</div>", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # =============================================
-    # Footer TradingView
-    # =============================================
-    st.markdown('<div class="tv-header">', unsafe_allow_html=True)
-    st.markdown("""
-    <div style="text-align: center; padding: 20px;">
-        <div style="color: var(--text-secondary); font-size: 12px; margin-bottom: 10px;">
-            🚀 Prototipo Educativo Fase 1-2-3-4 • No ejecuta órdenes reales
-        </div>
-        <div style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; font-size: 11px; color: var(--text-secondary);">
-            <span>✅ ML con Validación Honesta (≥80% precisión)</span>
-            <span>✅ Paper Trading $10k Simulado</span>
-            <span>✅ Alertas Telegram Integradas</span>
-            <span>✅ Hosteable en la nube</span>
-            <span>✅ Dashboard con Estilo TradingView</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
-except Exception as e:
-    st.error(f"❌ Error en el dashboard: {e}")
+    if st.session_state.paper_log:
+        with st.expander(f"Registro de operaciones ({len(st.session_state.paper_log)})", expanded=True):
+            for log_entry in st.session_state.paper_log[-10:]:
+                st.markdown(f'<div class="trade-log">{log_entry}</div>', unsafe_allow_html=True)
+
+    st.caption(
+        "Prototipo educativo Fases 1-4 · ML con validación honesta (≥80% precisión) · "
+        "Paper trading $10k simulado · Alertas Telegram · No ejecuta órdenes reales"
+    )
+
+except Exception as e:  # noqa: BLE001
+    st.error(f"Error en el dashboard: {e}")
     st.exception(e)

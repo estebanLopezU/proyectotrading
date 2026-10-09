@@ -194,9 +194,10 @@ with st.sidebar:
     symbol = st.text_input("Símbolo", value=SETTINGS.symbol, label_visibility="collapsed")
     timeframe = st.selectbox("Temporalidad", list(SETTINGS.timeframes), index=0, label_visibility="collapsed")
     refresh_ms = st.slider("Auto-refresh (s)", 5, 60, 15, label_visibility="collapsed")
-    ml_source = st.radio("ML", ["Local", "API"], horizontal=True, label_visibility="collapsed")
-    api_url = st.text_input("API URL", "http://127.0.0.1:8000", label_visibility="collapsed")
-    if st.button("🔄 Recargar", type="secondary", label_visibility="collapsed"):
+    ml_source = st.radio("ML", ["Local", "API"], horizontal=True)
+    api_url = st.text_input("API URL", "http://127.0.0.1:8000",
+                            disabled=ml_source != "API")
+    if st.button("🔄 Recargar", type="secondary"):
         st.cache_data.clear()
     st.divider()
     st.markdown("### 📊 Paper Trading")
@@ -204,17 +205,17 @@ with st.sidebar:
     st.session_state.paper = paper
     px = float(st.session_state.get("last_price", 0))
     eq = paper.equity(px)
-    st.metric("Equity", f"${eq:,.2f}", f"${(eq-10000):+,.2f}", label_visibility="collapsed")
-    st.metric("Cash", f"${paper.cash:,.2f}", label_visibility="collapsed")
-    st.metric("Qty", f"{paper.qty:.6f}", label_visibility="collapsed")
+    st.metric("Equity", f"${eq:,.2f}", f"${(eq-10000):+,.2f}")
+    st.metric("Cash", f"${paper.cash:,.2f}")
+    st.metric("Qty", f"{paper.qty:.6f}")
     col_buy, col_sell, col_reset = st.columns(3)
     with col_buy:
-        if st.button("🟢 BUY", type="primary", label_visibility="collapsed"):
+        if st.button("🟢 BUY", type="primary"):
             r = paper.buy(px, ts=utc_now().isoformat(), strategy="rule", rr=2.0)
             st.session_state["last_trade"] = ("BUY", r)
             st.rerun()
     with col_sell:
-        if st.button("🔴 SELL", type="secondary", label_visibility="collapsed"):
+        if st.button("🔴 SELL", type="secondary"):
             if paper.qty > 0:
                 r = paper.sell(px, ts=utc_now().isoformat(), strategy="rule", exit_reason="manual")
                 st.session_state["last_trade"] = ("SELL", r)
@@ -222,7 +223,7 @@ with st.sidebar:
             else:
                 st.info("Sin posición", icon="ℹ️")
     with col_reset:
-        if st.button("🗑️ Reset", type="secondary", label_visibility="collapsed"):
+        if st.button("🗑️ Reset", type="secondary"):
             st.session_state.paper = PaperAccount(cash=10000.0)
             st.rerun()
     st.divider()
@@ -230,6 +231,9 @@ with st.sidebar:
     st.caption("Prototipo educativo Fase 1-4")
     st.caption("Datos: Binance vía ccxt")
     st.caption("No ejecuta órdenes reales")
+
+# Auto-refresh conectado al slider del sidebar
+st_autorefresh(interval=refresh_ms * 1000, key="dashboard_v2_autorefresh")
 
 # ═══════════════════════════════════════
 # Carga de datos
@@ -320,16 +324,16 @@ for period_name, period_key, col in [
 # 2. Estado del mercado + ML
 # ═══════════════════════════════════════
 st.markdown('<div class="section-title">📈 Mercado + Señal</div>', unsafe_allow_html=True)
-ml = ml_signal(df, symbol, timeframe)
+ml = ml_signal(df, symbol, timeframe,
+               source="local" if ml_source != "API" else "api", api_base=api_url)
 
 cm1, cm2, cm3, cm4 = st.columns(4, gap="large")
 pct = _safe_float(tick.get("pct_24h"), 0)
-c1 = "delta-positive" if pct >= 0 else "delta-negative"
-cm1.metric("Precio", f"${price:,.2f} {symbol[:3]}", f"{pct:+.2f}%", delta_color=c1)
-cm2.metric("RSI 14", f"{_safe_float(last.get('rsi14'), 0):.1f}", delta_color="delta-neutral")
-cm2.metric("ATR 14", f"{_safe_float(last.get('atr_pct'), 0)*100:.2f}%", delta_color="delta-neutral")
-cm3.metric("24h High", f"${_safe_float(tick.get('high_24h'), 0):,.2f}", delta_color="delta-neutral")
-cm4.metric("24h Low", f"${_safe_float(tick.get('low_24h'), 0):,.2f}", delta_color="delta-neutral")
+cm1.metric("Precio", f"${price:,.2f} {symbol[:3]}", f"{pct:+.2f}%")
+cm2.metric("RSI 14", f"{_safe_float(last.get('rsi14'), 0):.1f}", delta_color="off")
+cm2.metric("ATR 14", f"{_safe_float(last.get('atr_pct'), 0)*100:.2f}%", delta_color="off")
+cm3.metric("24h High", f"${_safe_float(tick.get('high_24h'), 0):,.2f}", delta_color="off")
+cm4.metric("24h Low", f"${_safe_float(tick.get('low_24h'), 0):,.2f}", delta_color="off")
 
 st.divider()
 st.markdown('<div class="grid-2" style="grid-template-columns: 1fr 1fr; gap:16px;">')
@@ -343,7 +347,15 @@ st.metric("Cash", f"${paper.cash:,.2f}")
 st.metric("Posición", f"{paper.qty:.6f} {symbol[:3]}")
 
 if paper.qty > 0:
-    st.info(f"📍 LONG {paper.qty:.6f} {symbol[:3]} a ${paper.cash/paper.qty:,.2f} media", icon="📍")
+    entry_price = next(
+        (t["price"] for t in reversed(paper.trades)
+         if t.get("side") == "BUY" and t.get("status") == "OPEN"),
+        0.0,
+    )
+    if entry_price > 0:
+        u_pnl = (price / entry_price - 1) * 100
+        st.info(f"📍 LONG {paper.qty:.6f} {symbol[:3]} a ${entry_price:,.2f} "
+                f"({u_pnl:+.2f}% flotante)", icon="📍")
 
 # Columna derecha: señal ML
 st.markdown("### Señal ML")
@@ -428,7 +440,7 @@ else:
         margin=dict(l=0, r=0, t=30, b=0),
         hovermode="x unified",
     )
-    st.plotly_chart(fig, use_container_width=True, height=300)
+    st.plotly_chart(fig, width="stretch", height=300)
 
 # ═══════════════════════════════════════
 # 4. Reward:Risk + Mensual
@@ -462,7 +474,7 @@ if rr_data["rr_list"]:
         yaxis_title="R",
         showlegend=False,
     )
-    st.plotly_chart(fig_rr, use_container_width=True, height=180)
+    st.plotly_chart(fig_rr, width="stretch", height=180)
 
     st.markdown('<div style="display:flex; gap:16px;">')
     st.metric("Avg RR", f"{avg_rr:.2f}")
@@ -480,7 +492,7 @@ if mdf.empty:
 else:
     st.dataframe(
         mdf,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=180,
         column_config={
