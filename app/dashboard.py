@@ -8,17 +8,22 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.components.backtest import render_backtest
+from app.components.chart import render_chart
+from app.components.feature_importance import render_feature_importance
+from app.components.header import render_header
+from app.components.indicators import render_indicators
+from app.components.ml_panel import render_ml_panel
+from app.components.multi_symbol import render_multi_symbol
+from app.components.paper_trading import render_paper_trading
 from config.settings import SETTINGS
-from src.alerts import send_telegram
 from src.indicators import add_indicators, latest_signal
 from src.ingest import fetch_ticker_24h, get_ohlcv
 from src.ml_panel import has_trained_model, ml_signal
@@ -173,289 +178,126 @@ def load_data(symbol_: str, timeframe_: str):
         return None, True, "ERROR", 0, None
 
 # =============================================
-# Contenido principal
+# Fragmentos para evitar reruns innecesarios
 # =============================================
-try:
-    with st.spinner("Conectando a Binance..."):
-        df, stale, source, latency_ms, tick = load_data(symbol, timeframe)
-        tick = tick or {}
 
-    if df is None or df.empty:
-        st.warning("Sin velas disponibles. Verifica la conexión y el símbolo.")
-        st.stop()
+@st.fragment
+def render_dashboard_content(symbol: str, timeframe: str, ml_source: str, api_base: str):
+    """Fragmento principal: solo se re-ejecuta cuando cambian los inputs."""
+    try:
+        with st.spinner("Conectando a Binance..."):
+            df, stale, source, latency_ms, tick = load_data(symbol, timeframe)
+            tick = tick or {}
 
-    last = df.iloc[-1]
-    price = float(tick.get("last") or last["close"])
-    sig = latest_signal(df)
-    ml_pred = ml_signal(df, symbol, timeframe, source="local" if ml_source != "API" else "api",
-                        api_base=api_base)
+        if df is None or df.empty:
+            st.warning("Sin velas disponibles. Verifica la conexión y el símbolo.")
+            st.stop()
 
-    change_24h = float(tick.get("pct_24h") or 0.0)
-    high_24h = float(tick.get("high_24h") or df["high"].tail(24).max())
-    low_24h = float(tick.get("low_24h") or df["low"].tail(24).min())
-    atr_pct = last.get("atr_pct", float("nan"))
-    estado = "EN VIVO" if not stale else "DATOS EN CACHÉ"
+        last = df.iloc[-1]
+        price = float(tick.get("last") or last["close"])
+        sig = latest_signal(df)
+        ml_pred = ml_signal(df, symbol, timeframe, source="local" if ml_source != "API" else "api",
+                            api_base=api_base)
 
-    # =============================================
-    # Header
-    # =============================================
-    chg_color = "#34D399" if change_24h >= 0 else "#F87171"
-    st.markdown(f"""
-    <div class="app-header">
-        <div>
-            <div class="title">Mercado <span class="sep">/</span> {symbol}</div>
-            <div class="meta">Terminal de análisis · {timeframe} · Señales técnicas, modelo ML y simulación</div>
-            <div class="meta" style="margin-top:8px">
-                <span class="status-pill {'status-live' if not stale else 'status-stale'}">
-                    <span class="status-dot"></span>{estado}
-                </span>
-                <span style="margin-left:6px">Fuente: {source} · {latency_ms:.0f} ms · {len(df)} velas</span>
-            </div>
-        </div>
-        <div class="price-box">
-            <div class="price" style="color:{chg_color}">{fmt_money(price)}</div>
-            <div style="color:{chg_color};font-weight:700">{change_24h:+.2f}% · 24 h</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+        change_24h = float(tick.get("pct_24h") or 0.0)
+        high_24h = float(tick.get("high_24h") or df["high"].tail(24).max())
+        low_24h = float(tick.get("low_24h") or df["low"].tail(24).min())
+        atr_pct = last.get("atr_pct", float("nan"))
 
-    # =============================================
-    # KPIs con sparklines
-    # =============================================
-    spark = df["close"].tail(48).tolist()
-    vol_series = df["volume"].tail(48).tolist()
-    with st.container(horizontal=True):
-        st.metric("Precio", fmt_money(price), f"{change_24h:+.2%}",
-                  border=True, chart_data=spark, chart_type="line")
-        st.metric("Máximo 24 h", fmt_money(high_24h), border=True,
-                  chart_data=df["high"].tail(24).tolist())
-        st.metric("Mínimo 24 h", fmt_money(low_24h), border=True,
-                  chart_data=df["low"].tail(24).tolist())
-        st.metric("Volatilidad ATR",
-                  f"{float(atr_pct):.2f}%" if pd.notna(atr_pct) else "—",
-                  f"Vol. {df['volume'].iloc[-1]:,.0f}", border=True,
-                  chart_data=vol_series, chart_type="bar")
+        # =============================================
+        # Header
+        # =============================================
+        render_header(symbol, timeframe, price, change_24h, source, latency_ms, len(df), stale)
 
-    # =============================================
-    # Indicadores técnicos
-    # =============================================
-    st.subheader("Indicadores técnicos", icon=":material/query_stats:")
-    st.caption("Lectura de la última vela")
+        # =============================================
+        # KPIs con sparklines
+        # =============================================
+        spark = df["close"].tail(48).tolist()
+        vol_series = df["volume"].tail(48).tolist()
+        with st.container(horizontal=True):
+            st.metric("Precio", fmt_money(price), f"{change_24h:+.2%}",
+                      border=True, chart_data=spark, chart_type="line")
+            st.metric("Máximo 24 h", fmt_money(high_24h), border=True,
+                      chart_data=df["high"].tail(24).tolist())
+            st.metric("Mínimo 24 h", fmt_money(low_24h), border=True,
+                      chart_data=df["low"].tail(24).tolist())
+            st.metric("Volatilidad ATR",
+                      f"{float(atr_pct):.2f}%" if pd.notna(atr_pct) else "—",
+                      f"Vol. {df['volume'].iloc[-1]:,.0f}", border=True,
+                      chart_data=vol_series, chart_type="bar")
 
-    rsi_val = float(last.get("rsi14", 50) or 50)
-    bb_val = float(last.get("bb_pct", 0.5) or 0.5)
-    _hi24 = float(df["high"].tail(24).max())
-    _lo24 = float(df["low"].tail(24).min())
-    range_pos = (float(last["close"]) - _lo24) / (_hi24 - _lo24) if _hi24 > _lo24 else 0.5
-    macd_hist = float(last.get("macd_hist", 0.0) or 0.0)
+        # =============================================
+        # Indicadores técnicos
+        # =============================================
+        render_indicators(df)
 
-    ind_col1, ind_col2, ind_col3, ind_col4 = st.columns(4)
-    with ind_col1:
-        with st.container(border=True):
-            st.metric("RSI 14", f"{rsi_val:.1f}")
-            st.progress(min(max(rsi_val, 0), 100) / 100,
-                        text="Sobreventa < 30 · Sobrecompra > 70")
-            if rsi_val > 70:
-                st.markdown(":red-badge[Sobrecompra]")
-            elif rsi_val < 30:
-                st.markdown(":green-badge[Sobreventa]")
-    with ind_col2:
-        with st.container(border=True):
-            st.metric("Bollinger %B", f"{bb_val:.2f}")
-            st.progress(min(max(bb_val, 0), 1), text="Rango habitual 0 – 1")
-            if bb_val > 0.8:
-                st.markdown(":red-badge[Banda superior]")
-            elif bb_val < 0.2:
-                st.markdown(":green-badge[Banda inferior]")
-    with ind_col3:
-        with st.container(border=True):
-            st.metric("Posición en rango", f"{range_pos:.0%}", "Últimas 24 velas")
-            st.progress(min(max(range_pos, 0), 1))
-    with ind_col4:
-        with st.container(border=True):
-            st.metric("MACD histograma", f"{macd_hist:,.2f}")
-            st.progress(min(max(50 + macd_hist / float(last["close"]) * 10000, 0), 100) / 100)
-            if macd_hist > 0:
-                st.markdown(":green-badge[Momentum alcista]")
-            else:
-                st.markdown(":red-badge[Momentum bajista]")
-
-    # =============================================
-    # Señales
-    # =============================================
-    st.subheader("Señales técnicas y ML", icon=":material/insights:")
-    sig_col1, sig_col2 = st.columns(2)
-
-    with sig_col1:
-        with st.container(border=True):
-            st.markdown("**Señal por regla**")
-            if "COMPRAR" in sig["label"]:
-                st.success(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_up:")
-            elif "VENDER" in sig["label"]:
-                st.error(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_down:")
-            else:
-                st.info(f"{sig['label']} · score {sig['score']:+d}", icon=":material/pause:")
-            for reason in sig["reasons"]:
-                st.markdown(f"- {reason}")
-
-    with sig_col2:
-        with st.container(border=True):
-            st.markdown("**Señal ML validada**")
-            if ml_pred.get("ok"):
-                prob_up = float(ml_pred.get("prob_up") or 0.5)
-                fire = bool(ml_pred.get("fire"))
-                label = ml_pred.get("label", "SIN SEÑAL")
-                prec = float(ml_pred.get("precision") or 0.0)
-                lb = float(ml_pred.get("wilson_lb") or 0.0)
-                n_test = int(ml_pred.get("n_test") or 0)
-                mtf = ml_pred.get("model_timeframe", timeframe)
-                hz = ml_pred.get("horizon_velas", 0)
-                min_ret = float(ml_pred.get("min_ret") or 0.0)
-
-                if fire and "COMPRAR" in label:
-                    st.markdown('<div class="signal-banner banner-buy">SEÑAL: COMPRAR (LARGO)</div>',
-                                unsafe_allow_html=True)
-                elif fire and "VENDER" in label:
-                    st.markdown('<div class="signal-banner banner-sell">SEÑAL: VENDER (CORTO)</div>',
-                                unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="signal-banner banner-none">SIN SEÑAL · el edge validado no se cumple ahora</div>',
-                                unsafe_allow_html=True)
-
-                st.progress(min(max(prob_up, 0.0), 1.0))
-                st.markdown(
-                    f"**P(subida > {min_ret:.1%}) = {prob_up:.1%}** · "
-                    f"Modelo: {mtf} · horizonte: {hz} velas"
-                )
-                if ml_pred.get("target_desc"):
-                    st.caption(f"Objetivo: {ml_pred['target_desc']}")
-                st.caption(
-                    f"Precisión validada: {prec:.1%} · IC95% Wilson LB: {lb:.1%} · muestras: {n_test}"
-                )
-                cond = ml_pred.get("conditions") or {}
-                if cond:
-                    req = cond.get("cond_requerida", "-")
-                    cumple = cond.get("cond_cumplida", False)
-                    st.caption(f"Condición requerida: {req} → "
-                               f"{'cumplida' if cumple else 'NO cumplida'}")
-
-                # Alerta Telegram una sola vez por vela (evita spam en cada rerun)
-                if fire and prec >= 0.80:
-                    sig_key = f"{symbol}|{mtf}|{label}|{df['timestamp'].iloc[-1]}"
-                    if st.session_state.get("last_alert") != sig_key:
-                        r = send_telegram(
-                            f"{symbol} {mtf} {label} p={ml_pred.get('proba', 0):.2f} "
-                            f"prec={prec:.0%} LB={lb:.0%}"
-                        )
-                        if r.get("ok"):
-                            st.session_state.last_alert = sig_key
-                            st.toast("Alerta Telegram enviada")
-            else:
-                st.info(f"ML no disponible: {ml_pred.get('label', 'Modelo no entrenado')}")
-
-            st.caption(
-                "Educativo · precisión histórica validada, no garantiza el futuro. Gestiona tu riesgo."
+        # =============================================
+        # Multi-símbolo (opcional)
+        # =============================================
+        with st.expander("Comparar otros símbolos"):
+            extra_symbols = st.text_input(
+                "Símbolos a comparar (separados por coma)",
+                value="ETH/USDT, SOL/USDT",
+                key="multi_symbols_input"
             )
+            extra_list = [s.strip() for s in extra_symbols.split(",") if s.strip()]
+            all_symbols = [symbol] + [s for s in extra_list if s != symbol]
+            if len(all_symbols) > 1:
+                render_multi_symbol(all_symbols, timeframe)
 
-    # =============================================
-    # Gráfico de velas + volumen
-    # =============================================
-    st.subheader("Gráfico de velas", icon=":material/candlestick_chart:")
-    plot_df = df.tail(200)
+        # =============================================
+        # Señales
+        # =============================================
+        st.subheader("Señales técnicas y ML", icon=":material/insights:")
+        sig_col1, sig_col2 = st.columns(2)
 
-    fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
-        vertical_spacing=0.03, row_heights=[0.75, 0.25],
-    )
-    fig.add_trace(go.Candlestick(
-        x=plot_df["timestamp"],
-        open=plot_df["open"], high=plot_df["high"],
-        low=plot_df["low"], close=plot_df["close"],
-        increasing_line_color="#34D399", decreasing_line_color="#F87171",
-        name=symbol,
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=plot_df["timestamp"], y=plot_df["sma20"],
-        line=dict(color="#60A5FA", width=1.4), name="SMA 20",
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=plot_df["timestamp"], y=plot_df["sma50"],
-        line=dict(color="#FBBF24", width=1.4), name="SMA 50",
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=plot_df["timestamp"], y=plot_df["bb_low"],
-        line=dict(width=0), hoverinfo="skip", showlegend=False,
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=plot_df["timestamp"], y=plot_df["bb_high"],
-        line=dict(width=0), fill="tonexty", fillcolor="rgba(96,165,250,.09)",
-        hoverinfo="skip", name="Bollinger",
-    ), row=1, col=1)
-    fig.add_trace(go.Bar(
-        x=plot_df["timestamp"], y=plot_df["volume"],
-        marker_color=["#34D399" if c >= o else "#F87171"
-                      for c, o in zip(plot_df["close"], plot_df["open"], strict=True)],
-        name="Volumen",
-    ), row=2, col=1)
+        with sig_col1:
+            with st.container(border=True):
+                st.markdown("**Señal por regla**")
+                if "COMPRAR" in sig["label"]:
+                    st.success(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_up:")
+                elif "VENDER" in sig["label"]:
+                    st.error(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_down:")
+                else:
+                    st.info(f"{sig['label']} · score {sig['score']:+d}", icon=":material/pause:")
+                for reason in sig["reasons"]:
+                    st.markdown(f"- {reason}")
 
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#CBD5E1", family="Inter, sans-serif"),
-        margin=dict(l=16, r=16, t=10, b=16),
-        height=540,
-        xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", y=1.06, x=0),
-        hovermode="x unified",
-    )
-    fig.update_yaxes(showgrid=True, gridcolor="#1E293B", zeroline=False)
-    st.plotly_chart(fig, width="stretch")
+        with sig_col2:
+            with st.container(border=True):
+                render_ml_panel(ml_pred, symbol, timeframe, df)
 
-    # =============================================
-    # Paper trading
-    # =============================================
-    st.subheader("Paper trading simulado ($10,000)", icon=":material/account_balance_wallet:")
+        # =============================================
+        # Gráfico de velas + volumen
+        # =============================================
+        render_chart(df, symbol)
 
-    if "paper_cash" not in st.session_state:
-        st.session_state.paper_cash = 10000.0
-        st.session_state.paper_qty = 0.0
-        st.session_state.paper_log = []
+        # =============================================
+        # Backtest interactivo
+        # =============================================
+        render_backtest(symbol, timeframe)
 
-    px = float(last["close"])
-    eq = st.session_state.paper_cash + st.session_state.paper_qty * px
-    pnl_pct = (eq / 10000 - 1) * 100
+        # =============================================
+        # Feature Importance
+        # =============================================
+        with st.expander("Feature Importance del modelo"):
+            render_feature_importance(symbol, timeframe)
 
-    with st.container(horizontal=True):
-        st.metric("Patrimonio", f"${eq:,.2f}", f"{pnl_pct:+.2f}%", border=True)
-        st.metric("Efectivo", f"${st.session_state.paper_cash:,.2f}", border=True)
-        st.metric("Posición", f"{st.session_state.paper_qty:.6f}", border=True)
+        # =============================================
+        # Paper trading
+        # =============================================
+        render_paper_trading(float(last["close"]))
 
-    b1, b2 = st.columns(2)
-    if b1.button(":material/trending_up: Comprar sim (todo)", width="stretch"):
-        if st.session_state.paper_qty == 0 and st.session_state.paper_cash > 0:
-            q = (st.session_state.paper_cash / px) * 0.99925
-            st.session_state.paper_qty = q
-            st.session_state.paper_cash = 0.0
-            st.session_state.paper_log.append(f"BUY ${px:.2f} × {q:.6f}")
-            st.rerun()
-    if b2.button(":material/trending_down: Vender sim (todo)", width="stretch"):
-        if st.session_state.paper_qty > 0:
-            st.session_state.paper_cash = st.session_state.paper_qty * px * 0.99925
-            st.session_state.paper_log.append(f"SELL ${px:.2f} → ${st.session_state.paper_cash:,.2f}")
-            st.session_state.paper_qty = 0.0
-            st.rerun()
+        st.caption(
+            "Prototipo educativo Fases 1-4 · ML con validación honesta (≥80% precisión) · "
+            "Paper trading $10k simulado · Alertas Telegram · No ejecuta órdenes reales"
+        )
 
-    if st.session_state.paper_log:
-        with st.expander(f"Registro de operaciones ({len(st.session_state.paper_log)})", expanded=True):
-            for log_entry in st.session_state.paper_log[-10:]:
-                st.markdown(f'<div class="trade-log">{log_entry}</div>', unsafe_allow_html=True)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Error en el dashboard: {e}")
+        st.exception(e)
 
-    st.caption(
-        "Prototipo educativo Fases 1-4 · ML con validación honesta (≥80% precisión) · "
-        "Paper trading $10k simulado · Alertas Telegram · No ejecuta órdenes reales"
-    )
-
-except Exception as e:  # noqa: BLE001
-    st.error(f"Error en el dashboard: {e}")
-    st.exception(e)
+# =============================================
+# Ejecutar el fragmento principal
+# =============================================
+render_dashboard_content(symbol, timeframe, ml_source, api_base)

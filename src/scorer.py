@@ -102,7 +102,8 @@ def score_signal(df, symbol: str, timeframe: str = "1h", horizon: int = 3):
             X = d2[cols].tail(1)
         else:
             d2 = None
-            X = latest_features(src_df, cols)
+            from src.indicators import add_indicators
+            X = latest_features(add_indicators(src_df), cols)
 
         proba = float(b["model"].predict_proba(X)[0][1])
         prob_up, prob_down = proba, 1.0 - proba

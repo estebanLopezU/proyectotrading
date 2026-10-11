@@ -23,6 +23,55 @@ python scripts/train_model.py --symbol BTC/USDT --timeframe 15m --limit 1500
 python scripts/test_alert.py
 ```
 
+## Mejoras implementadas
+
+### Correcciones (P0)
+- **Bug fix**: `latest_features` en `scorer.py` ahora calcula indicadores antes de usarlos
+- **Unificación**: `features.py` es ahora un wrapper de `features_v2.py` (sin duplicación)
+
+### Tests (P1)
+- **Tests para `scorer.py`**: 6 tests cubriendo Wilson LB, score_signal y load_bundle
+- **CI/CD**: GitHub Actions con tests, lint y type checking
+
+### Modularización (P1)
+- **Dashboard modular**: Componentes separados en `app/components/`
+  - `header.py` - Header con precio y estado
+  - `indicators.py` - Panel de indicadores técnicos
+  - `chart.py` - Gráfico de velas + volumen
+  - `ml_panel.py` - Señales ML validadas
+  - `paper_trading.py` - Paper trading simulado
+  - `multi_symbol.py` - Comparación multi-símbolo
+  - `backtest.py` - Backtest interactivo
+  - `feature_importance.py` - Feature importance visual
+
+### Optimización (P2)
+- **`st.fragment`**: Dashboard dividido en fragmentos para evitar reruns innecesarios
+- **`st.cache_resource`**: Modelo ML cacheado para no recargar en cada rerun
+- **Tema en config.toml**: Configuración centralizada del tema oscuro
+
+### Features nuevas (P3)
+- **Multi-símbolo**: Compara BTC/ETH/SOL y otros en el mismo dashboard
+- **Backtest interactivo**: Configura capital, lookback y ejecuta backtest con equity curve
+- **Feature Importance**: Visualiza qué features pesan más en la predicción del modelo
+
+### Configuración (P1)
+- **`.env.example`**: Archivo de configuración completo con todas las variables de entorno
+
+## Estructura actualizada
+```
+config/settings.py
+src/ingest.py indicators.py features.py features_v2.py scorer.py paper.py alerts.py utils.py
+app/
+  dashboard.py
+  components/
+    header.py indicators.py chart.py ml_panel.py
+    paper_trading.py multi_symbol.py backtest.py feature_importance.py
+    ml_model_cache.py
+api/main.py
+scripts/demo_offline.py train_model.py predict_live.py backtest.py calibrate.py
+tests/ models/ data/
+```
+
 ## Hostear en la nube (Fase 4)
 **Opcion A - Streamlit Community Cloud (gratis, dashboard):**
 1. Sube el repo a GitHub (ya hecho: estebanLopezU/proyectotrading)
@@ -42,30 +91,6 @@ docker build -t trading-prototype .
 docker run -p 8501:8501 -p 8000:8000 trading-prototype
 ```
 
-## Evidencias validadas
-- Tests: 7/7 passed (indicadores + fase2 + api health)
-- Binance LIVE verificado con ccxt (ticker + OHLCV + predict fuente=live)
-- Modelo calibrado 15m ACC 0.71 con filtro ATR (ver scripts/calibrate.py)
-- Backtest 1h honesto: empate tecnico con MDD controlado
-
-## Estructura
-```
-config/settings.py
-src/ingest.py indicators.py features.py ml_panel.py paper.py alerts.py utils.py fallback_yf.py
-app/dashboard.py
-api/main.py
-scripts/demo_offline.py train_model.py predict_live.py backtest.py calibrate.py
-tests/ models/ data/
-```
-
-## Opciones implementadas
-- **1. Modelo ML mejorado**: +5 features nuevas (macd_abs, bb_width, close_vs_sma50, momentum_5, vol_5), hiperparametros CLI (--n_estimators --max_depth --min_samples_leaf), class_weight balanced. ACC 0.24 -> 0.61 con 1500 velas.
-- **2. API + Dashboard**: sidebar "Fuente de prediccion ML" -> Local o API (/predict) con FastAPI corriendo en :8000.
-- **3. Alertas Telegram**: .env (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID + ALERT_MIN_PROBA), script `scripts/test_alert.py`.
-- **4. Hostear**: `.streamlit/config.toml`, `render.yaml`, `Dockerfile` (instrucciones arriba).
-
 ## Aviso
 Educativo. El backtest no garantiza futuro. Nunca operes con dinero real
 basandote solo en este prototipo.
-
-
