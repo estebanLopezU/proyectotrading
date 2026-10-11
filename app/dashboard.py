@@ -23,6 +23,7 @@ from app.components.indicators import render_indicators
 from app.components.ml_panel import render_ml_panel
 from app.components.multi_symbol import render_multi_symbol
 from app.components.paper_trading import render_paper_trading
+from app.components.trading_game import render_trading_game
 from config.settings import SETTINGS
 from src.indicators import add_indicators, latest_signal
 from src.ingest import fetch_ticker_24h, get_ohlcv
@@ -266,6 +267,11 @@ def render_dashboard_content(symbol: str, timeframe: str, ml_source: str, api_ba
         with sig_col2:
             with st.container(border=True):
                 render_ml_panel(ml_pred, symbol, timeframe, df)
+
+        # =============================================
+        # Simulador de Trading
+        # =============================================
+        render_trading_game(symbol, timeframe)
 
         # =============================================
         # Gráfico de velas + volumen
