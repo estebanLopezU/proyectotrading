@@ -246,6 +246,11 @@ def render_dashboard_content(symbol: str, timeframe: str, ml_source: str, api_ba
                 render_multi_symbol(all_symbols, timeframe)
 
         # =============================================
+        # Simulador de Trading (visible enseguida)
+        # =============================================
+        render_trading_game(symbol, timeframe)
+
+        # =============================================
         # Señales
         # =============================================
         st.subheader("Señales técnicas y ML", icon=":material/insights:")
