@@ -182,9 +182,8 @@ def load_data(symbol_: str, timeframe_: str):
 # Fragmentos para evitar reruns innecesarios
 # =============================================
 
-@st.fragment
 def render_dashboard_content(symbol: str, timeframe: str, ml_source: str, api_base: str):
-    """Fragmento principal: solo se re-ejecuta cuando cambian los inputs."""
+    """Contenido principal del dashboard."""
     try:
         with st.spinner("Conectando a Binance..."):
             df, stale, source, latency_ms, tick = load_data(symbol, timeframe)
