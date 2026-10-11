@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
 from app.components.trading_game import render_trading_game
 from app.components.header import render_header
 from app.components.indicators import render_indicators
-from app.components.ml_panel import render_ml_panel
+from app.components.ml_panel import render_ml_panel_local as render_ml_panel
 from app.components.chart import render_chart
 from app.components.backtest import render_backtest
 from app.components.feature_importance import render_feature_importance
@@ -265,7 +265,7 @@ try:
 
     with sig_col2:
         with st.container(border=True):
-            render_ml_panel(ml_signal(df, symbol, timeframe, source="local" if ml_source != "API" else "api",
+            render_ml_panel_local(df, symbol, timeframe)
                                       api_base=api_base), symbol, timeframe, df)
 
     # =============================================
