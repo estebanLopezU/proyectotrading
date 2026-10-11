@@ -15,15 +15,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.components.backtest import render_backtest
-from app.components.chart import render_chart
-from app.components.feature_importance import render_feature_importance
+from app.components.trading_game import render_trading_game
 from app.components.header import render_header
 from app.components.indicators import render_indicators
 from app.components.ml_panel import render_ml_panel
-from app.components.multi_symbol import render_multi_symbol
+from app.components.chart import render_chart
+from app.components.backtest import render_backtest
+from app.components.feature_importance import render_feature_importance
 from app.components.paper_trading import render_paper_trading
-from app.components.trading_game import render_trading_game
+from app.components.multi_symbol import render_multi_symbol
 from config.settings import SETTINGS
 from src.indicators import add_indicators, latest_signal
 from src.ingest import fetch_ticker_24h, get_ohlcv
@@ -179,135 +179,121 @@ def load_data(symbol_: str, timeframe_: str):
         return None, True, "ERROR", 0, None
 
 # =============================================
-# Fragmentos para evitar reruns innecesarios
+# Contenido principal
 # =============================================
+try:
+    with st.spinner("Conectando a Binance..."):
+        df, stale, source, latency_ms, tick = load_data(symbol, timeframe)
+        tick = tick or {}
 
-def render_dashboard_content(symbol: str, timeframe: str, ml_source: str, api_base: str):
-    """Contenido principal del dashboard."""
-    try:
-        with st.spinner("Conectando a Binance..."):
-            df, stale, source, latency_ms, tick = load_data(symbol, timeframe)
-            tick = tick or {}
+    if df is None or df.empty:
+        st.warning("Sin velas disponibles. Verifica la conexión y el símbolo.")
+        st.stop()
 
-        if df is None or df.empty:
-            st.warning("Sin velas disponibles. Verifica la conexión y el símbolo.")
-            st.stop()
+    last = df.iloc[-1]
+    price = float(tick.get("last") or last["close"])
 
-        last = df.iloc[-1]
-        price = float(tick.get("last") or last["close"])
-        sig = latest_signal(df)
-        ml_pred = ml_signal(df, symbol, timeframe, source="local" if ml_source != "API" else "api",
-                            api_base=api_base)
+    # =============================================
+    # Header
+    # =============================================
+    chg_color = "#34D399" if float(tick.get("pct_24h") or 0.0) >= 0 else "#F87171"
+    estado = "EN VIVO" if not stale else "DATOS EN CACHÉ"
+    st.markdown(f"""
+    <div class="app-header">
+        <div>
+            <div class="title">Mercado <span class="sep">/</span> {symbol}</div>
+            <div class="meta">Terminal de análisis · {timeframe} · Señales técnicas, modelo ML y simulación</div>
+            <div class="meta" style="margin-top:8px">
+                <span class="status-pill {'status-live' if not stale else 'status-stale'}">
+                    <span class="status-dot"></span>{estado}
+                </span>
+                <span style="margin-left:6px">Fuente: {source} · {latency_ms:.0f} ms · {len(df)} velas</span>
+            </div>
+        </div>
+        <div class="price-box">
+            <div class="price" style="color:{chg_color}">{fmt_money(price)}</div>
+            <div style="color:{chg_color};font-weight:700">{float(tick.get("pct_24h") or 0.0):+.2f}% · 24 h</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-        change_24h = float(tick.get("pct_24h") or 0.0)
-        high_24h = float(tick.get("high_24h") or df["high"].tail(24).max())
-        low_24h = float(tick.get("low_24h") or df["low"].tail(24).min())
-        atr_pct = last.get("atr_pct", float("nan"))
+    # =============================================
+    # SIMULADOR DE TRADING - POSICIÓN PRIMERO
+    # =============================================
+    render_trading_game(symbol, timeframe)
 
-        # =============================================
-        # Header
-        # =============================================
-        render_header(symbol, timeframe, price, change_24h, source, latency_ms, len(df), stale)
+    # =============================================
+    # KPIs con sparklines
+    # =============================================
+    spark = df["close"].tail(48).tolist()
+    vol_series = df["volume"].tail(48).tolist()
+    with st.container(horizontal=True):
+        st.metric("Precio", fmt_money(price), f"{float(tick.get('pct_24h') or 0.0):+.2%}",
+                  border=True, chart_data=spark, chart_type="line")
+        st.metric("Máximo 24 h", fmt_money(float(tick.get("high_24h") or df["high"].tail(24).max())), border=True,
+                  chart_data=df["high"].tail(24).tolist())
+        st.metric("Mínimo 24 h", fmt_money(float(tick.get("low_24h") or df["low"].tail(24).min())), border=True,
+                  chart_data=df["low"].tail(24).tolist())
+        st.metric("Volatilidad ATR",
+                  f"{float(last.get('atr_pct', 0)):.2f}%" if pd.notna(last.get("atr_pct")) else "—",
+                  f"Vol. {df['volume'].iloc[-1]:,.0f}", border=True,
+                  chart_data=vol_series, chart_type="bar")
 
-        # =============================================
-        # KPIs con sparklines
-        # =============================================
-        spark = df["close"].tail(48).tolist()
-        vol_series = df["volume"].tail(48).tolist()
-        with st.container(horizontal=True):
-            st.metric("Precio", fmt_money(price), f"{change_24h:+.2%}",
-                      border=True, chart_data=spark, chart_type="line")
-            st.metric("Máximo 24 h", fmt_money(high_24h), border=True,
-                      chart_data=df["high"].tail(24).tolist())
-            st.metric("Mínimo 24 h", fmt_money(low_24h), border=True,
-                      chart_data=df["low"].tail(24).tolist())
-            st.metric("Volatilidad ATR",
-                      f"{float(atr_pct):.2f}%" if pd.notna(atr_pct) else "—",
-                      f"Vol. {df['volume'].iloc[-1]:,.0f}", border=True,
-                      chart_data=vol_series, chart_type="bar")
+    # =============================================
+    # Indicadores técnicos
+    # =============================================
+    render_indicators(df)
 
-        # =============================================
-        # Indicadores técnicos
-        # =============================================
-        render_indicators(df)
+    # =============================================
+    # Señales
+    # =============================================
+    st.subheader("Señales técnicas y ML", icon=":material/insights:")
+    sig_col1, sig_col2 = st.columns(2)
 
-        # =============================================
-        # Multi-símbolo (opcional)
-        # =============================================
-        with st.expander("Comparar otros símbolos"):
-            extra_symbols = st.text_input(
-                "Símbolos a comparar (separados por coma)",
-                value="ETH/USDT, SOL/USDT",
-                key="multi_symbols_input"
-            )
-            extra_list = [s.strip() for s in extra_symbols.split(",") if s.strip()]
-            all_symbols = [symbol] + [s for s in extra_list if s != symbol]
-            if len(all_symbols) > 1:
-                render_multi_symbol(all_symbols, timeframe)
+    with sig_col1:
+        with st.container(border=True):
+            st.markdown("**Señal por regla**")
+            sig = latest_signal(df)
+            if "COMPRAR" in sig["label"]:
+                st.success(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_up:")
+            elif "VENDER" in sig["label"]:
+                st.error(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_down:")
+            else:
+                st.info(f"{sig['label']} · score {sig['score']:+d}", icon=":material/pause:")
+            for reason in sig["reasons"]:
+                st.markdown(f"- {reason}")
 
-        # =============================================
-        # Simulador de Trading (visible enseguida)
-        # =============================================
-        render_trading_game(symbol, timeframe)
+    with sig_col2:
+        with st.container(border=True):
+            render_ml_panel(ml_signal(df, symbol, timeframe, source="local" if ml_source != "API" else "api",
+                                      api_base=api_base), symbol, timeframe, df)
 
-        # =============================================
-        # Señales
-        # =============================================
-        st.subheader("Señales técnicas y ML", icon=":material/insights:")
-        sig_col1, sig_col2 = st.columns(2)
+    # =============================================
+    # Gráfico de velas + volumen
+    # =============================================
+    render_chart(df, symbol)
 
-        with sig_col1:
-            with st.container(border=True):
-                st.markdown("**Señal por regla**")
-                if "COMPRAR" in sig["label"]:
-                    st.success(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_up:")
-                elif "VENDER" in sig["label"]:
-                    st.error(f"{sig['label']} · score {sig['score']:+d}", icon=":material/trending_down:")
-                else:
-                    st.info(f"{sig['label']} · score {sig['score']:+d}", icon=":material/pause:")
-                for reason in sig["reasons"]:
-                    st.markdown(f"- {reason}")
+    # =============================================
+    # Backtest interactivo
+    # =============================================
+    render_backtest(symbol, timeframe)
 
-        with sig_col2:
-            with st.container(border=True):
-                render_ml_panel(ml_pred, symbol, timeframe, df)
+    # =============================================
+    # Feature Importance
+    # =============================================
+    with st.expander("Feature Importance del modelo"):
+        render_feature_importance(symbol, timeframe)
 
-        # =============================================
-        # Simulador de Trading
-        # =============================================
-        render_trading_game(symbol, timeframe)
+    # =============================================
+    # Paper trading
+    # =============================================
+    render_paper_trading(float(last["close"]))
 
-        # =============================================
-        # Gráfico de velas + volumen
-        # =============================================
-        render_chart(df, symbol)
+    st.caption(
+        "Prototipo educativo Fases 1-4 · ML con validación honesta (≥80% precisión) · "
+        "Paper trading $10k simulado · Alertas Telegram · No ejecuta órdenes reales"
+    )
 
-        # =============================================
-        # Backtest interactivo
-        # =============================================
-        render_backtest(symbol, timeframe)
-
-        # =============================================
-        # Feature Importance
-        # =============================================
-        with st.expander("Feature Importance del modelo"):
-            render_feature_importance(symbol, timeframe)
-
-        # =============================================
-        # Paper trading
-        # =============================================
-        render_paper_trading(float(last["close"]))
-
-        st.caption(
-            "Prototipo educativo Fases 1-4 · ML con validación honesta (≥80% precisión) · "
-            "Paper trading $10k simulado · Alertas Telegram · No ejecuta órdenes reales"
-        )
-
-    except Exception as e:  # noqa: BLE001
-        st.error(f"Error en el dashboard: {e}")
-        st.exception(e)
-
-# =============================================
-# Ejecutar el fragmento principal
-# =============================================
-render_dashboard_content(symbol, timeframe, ml_source, api_base)
+except Exception as e:  # noqa: BLE001
+    st.error(f"Error en el dashboard: {e}")
+    st.exception(e)
