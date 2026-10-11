@@ -265,7 +265,7 @@ try:
 
     with sig_col2:
         with st.container(border=True):
-            render_ml_panel_local(df, symbol, timeframe)
+            render_ml_panel(df, symbol, timeframe)
 
     # =============================================
     # Gráfico de velas + volumen
